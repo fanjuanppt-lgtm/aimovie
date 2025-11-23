@@ -92,6 +92,15 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
     if (!brief.trim()) return alert("请输入简要描述");
     if (!universe || !egg) return;
 
+    // Check if key exists (Basic check)
+    const localKey = localStorage.getItem('gemini_api_key');
+    if (!localKey && !process.env.API_KEY) {
+        if (window.confirm("未检测到 API Key，是否前往“全局设置”进行配置？")) {
+            navigate('/settings');
+        }
+        return;
+    }
+
     setGenState({ isLoading: true, status: `正在使用 ${TEXT_MODELS.find(m => m.id === selectedTextModel)?.name?.split('(')[0]} 构思人物...` });
     try {
       // Include Egg Premise in context
@@ -110,7 +119,8 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
       setGenState({ isLoading: false, status: '' });
       setShowTextSettings(false); // Collapse after success
     } catch (e) {
-      setGenState({ isLoading: false, status: '', error: '生成失败，请重试' });
+      console.error(e);
+      setGenState({ isLoading: false, status: '', error: '生成失败。请检查“全局设置”中的 API Key 是否正确。' });
     }
   };
 
@@ -158,13 +168,13 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
       if (window.aistudio && window.aistudio.openSelectKey) {
          // @ts-ignore
          await window.aistudio.openSelectKey();
-         // No explicit success message needed as the dialog handles UI, but we can log
          console.log("Key selector opened");
       } else {
-        alert("未检测到 AI Studio 环境，无法自动选择 Key。请确保在支持的环境中运行。");
+         navigate('/settings');
       }
     } catch (e) {
       console.error("Failed to open key selector", e);
+      navigate('/settings');
     }
   };
 
@@ -175,26 +185,33 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
       return;
     }
 
-    // --- Nano Banana Pro / Gemini 3 Pro Logic ---
-    // Check API Key selection for Pro model
-    if (selectedModel === 'gemini-3-pro-image-preview') {
-      try {
-        // @ts-ignore - window.aistudio is injected by the environment
-        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-           // @ts-ignore
-           const hasKey = await window.aistudio.hasSelectedApiKey();
-           if (!hasKey) {
-             if (window.confirm("Nano Banana Pro (Gemini 3.0) 模型需要选择付费项目的 API Key。点击确定去选择。")) {
-               await handleOpenKeySelector();
-               // Proceeding optimistically, but in reality user might need to click generate again after selection if it's async
-             } else {
-               return; // Cancel generation
-             }
-           }
+    // --- Check for API Key ---
+    const localKey = localStorage.getItem('gemini_api_key');
+    const envKey = process.env.API_KEY;
+    const hasKey = !!localKey || !!envKey;
+
+    if (!hasKey) {
+        if(window.confirm("生成图片需要配置 API Key。是否前往设置页面？")) {
+            navigate('/settings');
         }
-      } catch (err) {
-        console.log("Skipped AI Studio key check (not in studio environment)", err);
-      }
+        return;
+    }
+
+    // --- Nano Banana Pro Logic ---
+    // If user selected Pro model, we warn about paid key requirements, but we trust the user provided a valid one in settings
+    // or via the window.aistudio environment.
+    if (selectedModel === 'gemini-3-pro-image-preview') {
+      // @ts-ignore
+      if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+         // This is AI Studio / IDX environment logic
+         // @ts-ignore
+         const studioKey = await window.aistudio.hasSelectedApiKey();
+         if (!studioKey && !localKey) {
+             // Try to force open selector if no local key either
+             await handleOpenKeySelector();
+         }
+      } 
+      // In Vercel environment, we just assume the LocalStorage key is the Paid key user provided.
     }
     
     // Construct a temp character object
@@ -240,7 +257,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
       }
 
       if (successCount === 0) {
-        setGenState({ isLoading: false, status: '', error: '所有图片生成均失败。如果是使用 Nano Banana Pro，请确保您的项目已开启 Billing。' });
+        setGenState({ isLoading: false, status: '', error: '所有图片生成均失败。请检查全局设置中的 API Key 是否有效，以及该 Key 是否支持选定的模型。' });
       } else {
         setGenState({ isLoading: false, status: '' });
       }
@@ -531,13 +548,13 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
                               <AlertCircle size={14} /> 需要付费 API Key
                            </div>
                            <p className="text-xs text-slate-300 mb-3 leading-relaxed">
-                             Nano Banana Pro (Gemini 3.0) 需要连接 Google Cloud 付费项目。请点击下方按钮选择您的 API Key。
+                             Nano Banana Pro (Gemini 3.0) 需要连接 Google Cloud 付费项目。请前往“全局设置”配置您的 API Key。
                            </p>
                            <button 
                              onClick={handleOpenKeySelector}
                              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-cinematic-gold hover:bg-amber-400 text-black text-xs font-bold rounded transition-colors"
                            >
-                             <Key size={14} /> 设置 / 切换 API Key
+                             <Key size={14} /> 去配置 Key
                            </button>
                         </div>
                       )}

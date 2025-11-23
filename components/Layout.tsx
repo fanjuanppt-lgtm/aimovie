@@ -1,7 +1,6 @@
-
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Film, Users, Image as ImageIcon, Home, Egg, Clapperboard } from 'lucide-react';
+import { Film, Users, Image as ImageIcon, Home, Egg, Clapperboard, Settings } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -83,8 +82,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
              </div>
           )}
         </nav>
+        
+        {/* Footer Actions */}
+        <div className="p-3 border-t border-cinematic-700 bg-cinematic-800">
+           <NavItem to="/settings" icon={<Settings size={18} />} label="全局设置 / Key" active={location.pathname === '/settings'} />
+        </div>
 
-        <div className="p-4 border-t border-cinematic-700 text-xs text-slate-500 text-center">
+        <div className="p-2 text-xs text-slate-600 text-center">
           Powered by Google Gemini 2.5
         </div>
       </aside>

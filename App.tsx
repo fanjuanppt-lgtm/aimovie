@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Universe, StoryEgg, Character, Storyboard } from './types';
@@ -10,6 +9,7 @@ import { StoryEggDetail } from './pages/StoryEggDetail';
 import { CharacterStudio } from './pages/CharacterStudio';
 import { StoryboardCreator } from './pages/StoryboardCreator';
 import { Gallery } from './pages/Gallery';
+import { Settings } from './pages/Settings';
 import { dbService } from './services/db';
 import { Loader2 } from 'lucide-react';
 
@@ -136,6 +136,7 @@ const App: React.FC = () => {
         <Routes>
           <Route path="/" element={<Dashboard universes={universes} />} />
           <Route path="/create-universe" element={<UniverseCreator onSave={addUniverse} />} />
+          <Route path="/settings" element={<Settings />} />
           
           {/* Universe Level */}
           <Route 

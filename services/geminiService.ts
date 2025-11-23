@@ -2,10 +2,18 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Character, CharacterRoots, CharacterShape, CharacterSoul, StoryboardFrame } from "../types";
 
 // Helper to get a fresh instance of the AI client.
-// This is crucial because checking window.aistudio.openSelectKey() updates the environment variable,
-// and we need a new instance to pick up the new key.
+// UPDATED: Now checks LocalStorage first for deployed environments (Vercel),
+// then falls back to process.env (Dev environment).
 const getAI = () => {
-  const apiKey = process.env.API_KEY || '';
+  const localKey = localStorage.getItem('gemini_api_key');
+  const envKey = process.env.API_KEY;
+  
+  const apiKey = localKey || envKey || '';
+  
+  if (!apiKey) {
+    throw new Error("未检测到 API Key。请前往“全局设置”页面配置您的 Gemini API Key。");
+  }
+
   return new GoogleGenAI({ apiKey });
 };
 
@@ -22,7 +30,14 @@ export const generateCharacterProfile = async (
   // Note: For 'jimeng-style', we still use Gemini as the backend engine but with a specific
   // persona and style instruction to mimic the creative writing style of Jimeng/Doubao.
   const model = 'gemini-2.5-flash'; 
-  const ai = getAI();
+  
+  let ai;
+  try {
+    ai = getAI();
+  } catch (e) {
+    console.error(e);
+    throw e;
+  }
 
   let styleInstruction = "";
   if (textModel === 'jimeng-style') {
@@ -124,7 +139,12 @@ export const generateCharacterImage = async (
   referenceImageBase64?: string | null
 ): Promise<string> => {
   
-  const ai = getAI();
+  let ai;
+  try {
+    ai = getAI();
+  } catch (e) {
+    throw e;
+  }
 
   const physicalDescription = `
     Character Name: ${character.roots.name}
@@ -217,7 +237,12 @@ export const generateStoryboardPlan = async (
   characterNames: string[]
 ): Promise<Omit<StoryboardFrame, 'id' | 'imageUrl'>[]> => {
   const model = 'gemini-2.5-flash';
-  const ai = getAI();
+  let ai;
+  try {
+    ai = getAI();
+  } catch (e) {
+    throw e;
+  }
   
   const prompt = `
     Act as a professional Film Director and Cinematographer.
@@ -271,7 +296,12 @@ export const generateStoryboardFrameImage = async (
   involvedCharacters: Character[]
 ): Promise<string> => {
   const model = 'gemini-2.5-flash-image';
-  const ai = getAI();
+  let ai;
+  try {
+    ai = getAI();
+  } catch (e) {
+    throw e;
+  }
 
   // Compile character visual guide to ensure consistency in the frame
   const characterVisualGuide = involvedCharacters.map(c => `
