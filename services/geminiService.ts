@@ -15,15 +15,34 @@ const getAI = () => {
 export const generateCharacterProfile = async (
   universeContext: string,
   briefDescription: string,
-  role: string // New parameter for Character Role/Archetype
+  role: string, // New parameter for Character Role/Archetype
+  textModel: string = 'gemini-2.5-flash' // 'gemini-2.5-flash' | 'jimeng-style'
 ): Promise<{ roots: CharacterRoots; shape: CharacterShape; soul: CharacterSoul }> => {
   
-  const model = 'gemini-2.5-flash';
+  // Note: For 'jimeng-style', we still use Gemini as the backend engine but with a specific
+  // persona and style instruction to mimic the creative writing style of Jimeng/Doubao.
+  const model = 'gemini-2.5-flash'; 
   const ai = getAI();
+
+  let styleInstruction = "";
+  if (textModel === 'jimeng-style') {
+    styleInstruction = `
+      【风格要求 - 重要】：
+      请模仿“即梦(Jimeng)”或“豆包”等中文创意写作AI的风格。
+      1. 用词要更具“网感”和文学性，避免过于生硬的翻译腔。
+      2. 在描写外貌和性格时，使用更细腻、更有画面感的词汇（例如使用比喻、强调氛围）。
+      3. 情感描写要更深刻，强调角色的内心戏和矛盾感。
+      4. 即使是简单的设定，也要写得像小说人物小传一样吸引人。
+    `;
+  } else {
+    styleInstruction = "保持专业、客观、逻辑严密的影视剧本设定风格。";
+  }
 
   const prompt = `
     作为一个专业的影视编剧AI助手，请根据以下背景和简要描述，为一个角色创建深度的人物小传。
     
+    ${styleInstruction}
+
     宇宙背景: ${universeContext}
     角色剧作定位: ${role} (这一点非常重要，请确保人物设定符合其在故事中的功能)
     角色简述: ${briefDescription}

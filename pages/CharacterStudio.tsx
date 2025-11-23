@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Universe, StoryEgg, Character, CharacterRoots, CharacterShape, CharacterSoul, GenerationState, CharacterImage } from '../types';
@@ -34,6 +33,12 @@ const IMAGE_MODELS = [
   { id: 'gemini-3-pro-image-preview', name: 'Nano Banana Pro (Gemini 3.0 Pro/高画质)' },
 ];
 
+// Available Text Models
+const TEXT_MODELS = [
+  { id: 'gemini-2.5-flash', name: 'Google Gemini 2.5 (默认/通用)' },
+  { id: 'jimeng-style', name: '即梦 Jimeng (创意写作/网文风)' },
+];
+
 export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, storyEggs, characters, onSave }) => {
   const navigate = useNavigate();
   const { universeId, eggId, characterId } = useParams<{ universeId: string; eggId: string; characterId?: string }>();
@@ -61,6 +66,11 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
   const [refImage, setRefImage] = useState<string | null>(null);
   const directUploadInputRef = useRef<HTMLInputElement>(null);
 
+  // --- Text Generation Settings ---
+  const [showTextSettings, setShowTextSettings] = useState(false);
+  const [selectedTextModel, setSelectedTextModel] = useState(TEXT_MODELS[0].id);
+
+
   // Load Existing Character Data if Editing
   useEffect(() => {
     if (isEditing && characters.length > 0) {
@@ -82,7 +92,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
     if (!brief.trim()) return alert("请输入简要描述");
     if (!universe || !egg) return;
 
-    setGenState({ isLoading: true, status: '正在结合宇宙规则与故事大纲构思人物...' });
+    setGenState({ isLoading: true, status: `正在使用 ${TEXT_MODELS.find(m => m.id === selectedTextModel)?.name?.split('(')[0]} 构思人物...` });
     try {
       // Include Egg Premise in context
       const context = `
@@ -92,12 +102,13 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
         当前故事(Story Egg): ${egg.title} - ${egg.premise}
       `;
       
-      // Pass role to service
-      const profile = await generateCharacterProfile(context, brief, role);
+      // Pass role and textModel to service
+      const profile = await generateCharacterProfile(context, brief, role, selectedTextModel);
       setRoots(profile.roots);
       setShape(profile.shape);
       setSoul(profile.soul);
       setGenState({ isLoading: false, status: '' });
+      setShowTextSettings(false); // Collapse after success
     } catch (e) {
       setGenState({ isLoading: false, status: '', error: '生成失败，请重试' });
     }
@@ -307,9 +318,37 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
 
       {/* AI Quick Start */}
       <div className="bg-cinematic-800 p-6 rounded-xl border border-cinematic-700 mb-8 shadow-lg">
-        <label className="block text-sm font-medium text-cinematic-gold mb-2 flex items-center gap-2">
-           <Wand2 size={16} /> AI 灵感速写
-        </label>
+        <div className="flex justify-between items-center mb-4">
+           <label className="text-sm font-medium text-cinematic-gold flex items-center gap-2">
+             <Wand2 size={16} /> AI 灵感速写
+           </label>
+           
+           {/* Text Engine Toggle */}
+           <button 
+             onClick={() => setShowTextSettings(!showTextSettings)}
+             className={`text-xs flex items-center gap-1 px-2 py-1 rounded transition-colors ${showTextSettings ? 'bg-cinematic-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+           >
+             <Settings size={12} /> {showTextSettings ? '收起配置' : '文本引擎配置'}
+           </button>
+        </div>
+
+        {/* Text Engine Settings Panel */}
+        {showTextSettings && (
+           <div className="mb-4 p-4 bg-cinematic-900/50 rounded-lg border border-cinematic-700 animate-in slide-in-from-top-2">
+              <label className="block text-xs text-slate-500 mb-2 uppercase font-semibold">选择文本生成引擎 (Text Model)</label>
+              <select 
+                value={selectedTextModel} 
+                onChange={(e) => setSelectedTextModel(e.target.value)}
+                className="w-full bg-cinematic-800 border border-cinematic-700 rounded px-3 py-2 text-white focus:border-cinematic-accent outline-none text-sm"
+              >
+                {TEXT_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              <p className="mt-2 text-xs text-slate-500">
+                * 提示：选择“即梦 Jimeng”将模拟网文/创意写作风格，生成更具情感张力的人物小传。
+              </p>
+           </div>
+        )}
+
         <div className="flex gap-4 flex-col lg:flex-row">
           {/* Role Selector */}
           <div className="lg:w-1/4">
