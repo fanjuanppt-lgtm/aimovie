@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Universe, StoryEgg, Scene, SceneImage, ShotDef } from '../types';
 import { generateSceneDescription, generateSceneImage } from '../services/geminiService';
-import { ArrowLeft, Map, Save, Loader2, Sparkles, Image as ImageIcon, Upload, Trash2, ZoomIn, X, RefreshCw, PlusCircle, Edit, Info, Check, Link as LinkIcon } from 'lucide-react';
+import { ArrowLeft, Map, Save, Loader2, Sparkles, Image as ImageIcon, Upload, Trash2, ZoomIn, X, RefreshCw, PlusCircle, Edit, Info, Check, Link as LinkIcon, Zap } from 'lucide-react';
 
 interface SceneStudioProps {
   universes: Universe[];
@@ -61,16 +61,13 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
       setName(existingScene.name);
       setDescription(existingScene.description);
       
-      // Migrate old images to include shotId if missing (using type as fallback)
       const migratedImages = existingScene.images.map(img => ({
           ...img,
           id: img.id || Date.now().toString() + Math.random(),
-          // Use 'type' as the link to shotDef ID for backward compatibility
           type: img.type 
       }));
       setImages(migratedImages);
 
-      // Load Shot Defs or Default
       if (existingScene.shotDefs && existingScene.shotDefs.length > 0) {
           setShotDefs(existingScene.shotDefs);
       } else {
@@ -81,11 +78,11 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
 
   const handleAIExpand = async () => {
     if (!name) return alert("请先输入场景名称");
-    if (!universe) return;
+    if (!universe || !egg) return;
 
     setIsExpanding(true);
     try {
-      const result = await generateSceneDescription(universe.name, name, description);
+      const result = await generateSceneDescription(universe.name, name, description, egg.fullScript);
       setDescription(result);
     } catch (e) {
       alert("AI 描述生成失败");
@@ -99,10 +96,8 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
     
     setLoadingSlot(shot.id);
     try {
-        // Priority 1: Specific Manual Reference for this shot
         let effectiveRefImage = referenceImages[shot.id];
         
-        // Priority 2: Auto Consistency - Use Main View if available and we are NOT generating the Main View
         if (!effectiveRefImage && shot.id !== 'main') {
             const mainImg = images.find(i => i.type === 'main');
             if (mainImg) {
@@ -113,7 +108,6 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
 
         const combinedDesc = `${description || name}\n\n[SPECIFIC SHOT INSTRUCTION]: ${shot.prompt}`;
         
-        // For custom shots, use 'custom' view type to avoid forcing "Wide Angle" prompts
         const effectiveViewType = (['main', 'overhead', 'isometric', 'reverse'].includes(shot.id)) 
             ? shot.id 
             : 'custom'; 
@@ -218,7 +212,7 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
       setIsSaving(true);
       const newScene: Scene = {
           id: sceneId || Date.now().toString(),
-          ownerId: '', // Placeholder, will be injected by App
+          ownerId: '', 
           universeId: universeId!,
           storyEggId: eggId!,
           name,
@@ -276,8 +270,9 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
                
                <div>
                    <div className="flex justify-between items-end mb-2">
-                       <label className="block text-xs font-bold text-slate-400 uppercase">
-                          场景详细视觉描述 <span className="text-slate-500 font-normal">(AI 生成的图片将基于此描述)</span>
+                       <label className="block text-xs font-bold text-slate-400 uppercase flex items-center gap-2">
+                          场景详细视觉描述 
+                          {egg.fullScript && <span className="text-[10px] text-green-500 bg-green-900/10 px-2 rounded border border-green-900/30 flex items-center gap-1"><Zap size={8}/> 剧本全稿上下文已就绪</span>}
                        </label>
                        <button
                            onClick={handleAIExpand}
@@ -285,7 +280,7 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
                            className="text-xs flex items-center gap-1 text-cinematic-gold hover:text-amber-300 bg-cinematic-900 px-3 py-1.5 rounded transition-colors disabled:opacity-50 border border-cinematic-700 hover:border-cinematic-gold/30"
                        >
                            {isExpanding ? <Loader2 className="animate-spin" size={12}/> : <Sparkles size={12}/>}
-                           AI 智能扩写
+                           AI 智能扩写 (基于剧本)
                        </button>
                    </div>
                    <textarea 
@@ -428,7 +423,6 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
                                             {existingImg ? '重绘' : '生成'}
                                         </button>
                                         
-                                        {/* Manual Upload Button */}
                                         <div className="relative">
                                             <button 
                                                 onClick={() => uploadRefs.current[shot.id]?.click()}
@@ -446,7 +440,6 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
                                             />
                                         </div>
                                         
-                                        {/* Ref Image Button */}
                                         <div className="relative">
                                             <button 
                                                 onClick={() => refUploadRefs.current[shot.id]?.click()}
@@ -475,7 +468,6 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
                )
            })}
 
-           {/* ADD NEW CARD */}
            {isAddingShot ? (
                <div className="bg-cinematic-800 rounded-xl border border-cinematic-gold p-6 flex flex-col gap-3 animate-in fade-in">
                     <h3 className="text-sm font-bold text-white mb-2">添加新角度</h3>

@@ -35,6 +35,7 @@ export interface StoryEgg {
   universeId: string;
   title: string;
   premise: string; 
+  fullScript?: string; // New: Full TXT script content
   createdAt: Date;
 }
 
@@ -89,6 +90,7 @@ export interface Character {
   summary: string; 
   visualDescription?: string; 
   images: CharacterImage[];
+  coverImageId?: string; // New: User selected cover image ID
   customShots?: ShotDef[]; 
   shotDefs?: ShotDef[]; 
   deletedAt?: string; 

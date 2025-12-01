@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Universe, StoryEgg, Character, Storyboard, Scene, StoryboardFrame, ScriptShot } from '../types';
@@ -280,7 +282,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
 
       const storyboard: Storyboard = {
           id: idToUse,
-          ownerId: '', // Placeholder, will be injected by App
+          ownerId: '', 
           universeId: universeId!,
           storyEggId: eggId!,
           sceneId: sceneIdRef.current || undefined,
@@ -334,7 +336,8 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
           roughPlot, 
           currentStartId,
           SHOTS_PER_GROUP,
-          charactersForScript 
+          charactersForScript,
+          egg.fullScript 
       );
       
       setScriptShots(prev => {
@@ -454,7 +457,10 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
           }
 
           const charPayload = groupCharacters.map(c => {
-            const refImg = c.images.find(img => img.angle.startsWith('01')) || c.images[0];
+            // New logic: Check if cover image is set, otherwise default to 01
+            let refImg = c.images.find(img => img.id === c.coverImageId);
+            if (!refImg) refImg = c.images.find(img => img.angle.startsWith('01')) || c.images[0];
+
             return { name: c.roots.name, imageUrl: refImg ? refImg.url : '' };
           }).filter(c => !!c.imageUrl);
 
@@ -527,6 +533,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
       }
   };
 
+  // ... (handleRefinePanel, handleSwitchVersion, handleManualSave etc remain same) ...
   const handleRefinePanel = async () => {
       if (activeRefineGroupIndex === null) return;
       if (!refineInstruction) return alert("请输入修改指令");
@@ -617,7 +624,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
 
     const storyboard: Storyboard = {
       id: idToUse, 
-      ownerId: '', // Placeholder, will be injected by App
+      ownerId: '', 
       universeId: universeId!, 
       storyEggId: eggId!, 
       sceneId: selectedSceneId || undefined,
@@ -643,14 +650,10 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
   if (!universe || !egg) return <div>Loading...</div>;
 
   const totalGroups = Math.ceil(scriptShots.length / SHOTS_PER_GROUP);
-  
-  // Characters active in this scene
   const activeCast = availableCharacters.filter(c => participatingCharIds.includes(c.id));
-  
-  // Scene Images for Override Selector
   const activeSceneObj = selectedSceneId ? scenes.find(s => s.id === selectedSceneId) : null;
 
-  // Helper to render the active image selector
+  // ... (renderImageSelectorModal remains same) ...
   const renderImageSelectorModal = () => {
       if (!activeImageSelector) return null;
       
@@ -1166,7 +1169,6 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
 
       </div>
 
-       {/* Render Active Selector Modal */}
        {renderImageSelectorModal()}
 
        {viewingImage && (

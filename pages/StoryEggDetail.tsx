@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Universe, StoryEgg, Character, Storyboard, Scene } from '../types';
-import { ArrowLeft, UserPlus, Users, ArrowRight, Clapperboard, Film, Edit, Save, X, Image as ImageIcon, Map, Trash2, RotateCcw, Ban, GripVertical } from 'lucide-react';
+import { ArrowLeft, UserPlus, Users, ArrowRight, Clapperboard, Film, Edit, Save, X, Image as ImageIcon, Map, Trash2, RotateCcw, Ban, GripVertical, FileText, Upload, CheckCircle } from 'lucide-react';
 
 interface StoryEggDetailProps {
   universes: Universe[];
@@ -32,7 +32,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
   const allEggCharacters = characters.filter(c => c.storyEggId === eggId);
   
   // Separate Active and Deleted characters
-  // Sort Active Characters by orderIndex
   const activeCharacters = allEggCharacters
     .filter(c => !c.deletedAt)
     .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
@@ -57,6 +56,10 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
   // Drag State (Shared for both characters and storyboards since they are in different tabs)
   const [draggedId, setDraggedId] = useState<string | null>(null);
 
+  // Script Upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
   const startEditing = () => {
     if (!egg) return;
     setEditTitle(egg.title);
@@ -75,8 +78,37 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
     setIsEditing(false);
   };
 
+  const handleScriptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !egg) return;
+      
+      setIsUploading(true);
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+          const content = event.target?.result as string;
+          try {
+              const updatedEgg = { ...egg, fullScript: content };
+              await onUpdateEgg(updatedEgg);
+              alert("剧本全稿已上传！AI 将在后续生成中参考此内容。");
+          } catch (error) {
+              alert("上传失败");
+          } finally {
+              setIsUploading(false);
+          }
+      };
+      reader.readAsText(file);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+  
+  const handleClearScript = async () => {
+      if (!egg) return;
+      if (window.confirm("确定要移除已上传的剧本全稿吗？")) {
+          const updatedEgg = { ...egg, fullScript: undefined };
+          await onUpdateEgg(updatedEgg);
+      }
+  };
+
   const handleDeleteChar = async (id: string) => {
-      // 使用 window.confirm 确保用户意图，且阻止任何默认行为
       if(window.confirm("确定要将此角色移入回收站吗？\n（可在回收站中恢复）")) {
           await onDeleteCharacter(id);
       }
@@ -88,18 +120,16 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
       }
   };
 
-  // --- GENERIC DRAG HANDLERS ---
   const handleDragStart = (e: React.DragEvent, id: string) => {
       setDraggedId(id);
       e.dataTransfer.effectAllowed = "move";
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-      e.preventDefault(); // Necessary to allow dropping
+      e.preventDefault(); 
       e.dataTransfer.dropEffect = "move";
   };
 
-  // --- CHARACTER DROP HANDLER ---
   const handleCharDrop = async (e: React.DragEvent, targetId: string) => {
       e.preventDefault();
       if (!draggedId || draggedId === targetId) return;
@@ -113,7 +143,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
       const [movedChar] = newOrder.splice(sourceIndex, 1);
       newOrder.splice(targetIndex, 0, movedChar);
 
-      // Update DB
       for (let i = 0; i < newOrder.length; i++) {
           const char = newOrder[i];
           if (char.orderIndex !== i) {
@@ -124,7 +153,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
       setDraggedId(null);
   };
 
-  // --- STORYBOARD DROP HANDLER ---
   const handleStoryboardDrop = async (e: React.DragEvent, targetId: string) => {
       e.preventDefault();
       if (!draggedId || draggedId === targetId) return;
@@ -138,7 +166,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
       const [movedSb] = newOrder.splice(sourceIndex, 1);
       newOrder.splice(targetIndex, 0, movedSb);
 
-      // Update DB
       for (let i = 0; i < newOrder.length; i++) {
           const sb = newOrder[i];
           if (sb.orderIndex !== i) {
@@ -153,7 +180,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
 
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
-      {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-slate-500 mb-6">
         <Link to="/" className="hover:text-white transition-colors">首页</Link>
         <span>/</span>
@@ -163,7 +189,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
       </div>
 
       <div className="bg-cinematic-800/50 rounded-2xl border border-cinematic-700 p-8 mb-8 relative">
-         {/* Header Actions */}
          <div className="absolute top-6 right-6">
           {!isEditing ? (
             <button 
@@ -192,9 +217,52 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
 
         {!isEditing ? (
           <div className="flex flex-col md:flex-row justify-between items-start gap-6">
-            <div>
+            <div className="flex-1">
               <h1 className="text-3xl font-bold text-white mb-2">{egg.title}</h1>
-              <p className="text-slate-300 text-lg">{egg.premise}</p>
+              <p className="text-slate-300 text-lg mb-4">{egg.premise}</p>
+              
+              {/* SCRIPT FILE INDICATOR */}
+              <div className="flex items-center gap-4 mt-6">
+                  {egg.fullScript ? (
+                      <div className="flex items-center gap-3 bg-green-900/20 border border-green-500/30 px-3 py-2 rounded-lg">
+                          <FileText className="text-green-500" size={20} />
+                          <div>
+                              <div className="text-sm font-bold text-green-400 flex items-center gap-1">
+                                  剧本全稿已就绪 <CheckCircle size={12}/>
+                              </div>
+                              <div className="text-[10px] text-green-500/70">
+                                  约 {egg.fullScript.length} 字 | AI 生成时将参考此内容
+                              </div>
+                          </div>
+                          <button onClick={handleClearScript} className="ml-2 p-1.5 hover:bg-green-900/50 rounded-full text-green-500/50 hover:text-green-400" title="移除剧本">
+                              <X size={14} />
+                          </button>
+                          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 hover:bg-green-900/50 rounded-full text-green-500/50 hover:text-green-400" title="更新剧本">
+                              <Upload size={14} />
+                          </button>
+                      </div>
+                  ) : (
+                      <div className="flex items-center gap-2">
+                          <button 
+                             onClick={() => fileInputRef.current?.click()}
+                             className="flex items-center gap-2 px-3 py-2 bg-cinematic-900 border border-cinematic-700 hover:border-cinematic-gold rounded-lg text-slate-400 hover:text-white transition-colors text-xs font-medium"
+                          >
+                              <Upload size={14} /> 上传剧本全稿 (.txt)
+                          </button>
+                          <span className="text-[10px] text-slate-600">
+                             上传后 AI 可更精准地进行人物、场景和分镜侧写
+                          </span>
+                      </div>
+                  )}
+                  <input 
+                    type="file" 
+                    accept=".txt" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    onChange={handleScriptUpload}
+                  />
+              </div>
+
               <p className="text-sm text-slate-500 mt-4">所属宇宙：{universe.name} | 类型：{universe.type}</p>
             </div>
           </div>
@@ -221,7 +289,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
         )}
       </div>
 
-      {/* Tabs */}
       <div className="flex border-b border-cinematic-700 mb-6 overflow-x-auto whitespace-nowrap">
         <button
           onClick={() => setActiveTab('characters')}
@@ -255,11 +322,9 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
         </button>
       </div>
 
-      {/* Characters Tab */}
       {activeTab === 'characters' && (
         <>
           <div className="flex justify-between items-center mb-6">
-             {/* Left: Trash Bin Button */}
              <button
                onClick={() => setShowCharTrash(true)}
                className="text-slate-500 hover:text-slate-300 flex items-center gap-2 text-sm px-3 py-2 rounded hover:bg-cinematic-800 transition-colors"
@@ -271,7 +336,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                  )}
              </button>
 
-             {/* Right: Create Button */}
              <Link 
               to={`/universe/${universeId}/egg/${eggId}/character-studio`}
               className="bg-cinematic-accent hover:bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 shadow-lg shadow-blue-900/20 transition-transform hover:scale-105"
@@ -286,7 +350,17 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                 <p>该故事暂无角色。</p>
               </div>
             )}
-            {activeCharacters.map(char => (
+            {activeCharacters.map(char => {
+              // LOGIC: Use coverImageId if set, otherwise fallback to first valid image
+              let displayImage = null;
+              if (char.coverImageId) {
+                  displayImage = char.images.find(img => img.id === char.coverImageId);
+              }
+              if (!displayImage) {
+                  displayImage = char.images.find(img => !img.deletedAt);
+              }
+
+              return (
               <div 
                 key={char.id} 
                 draggable
@@ -296,7 +370,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                 className={`group relative bg-cinematic-800 rounded-xl overflow-hidden border border-cinematic-700 hover:border-cinematic-accent transition-all hover:shadow-xl ${draggedId === char.id ? 'opacity-50' : 'opacity-100'}`}
               >
                 
-                {/* 1. ACTIONS OVERLAY (Highest Z-Index) - Absolutely Positioned */}
                 <div className="absolute top-3 right-3 z-50 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                     <button 
                         type="button"
@@ -314,7 +387,7 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                         type="button"
                         onClick={(e) => {
                             e.preventDefault();
-                            e.stopPropagation(); // Prevent Link click
+                            e.stopPropagation(); 
                             navigate(`/universe/${universeId}/egg/${eggId}/character-studio/${char.id}`);
                         }}
                         className="p-2.5 bg-cinematic-gold text-black rounded-full shadow-lg hover:bg-amber-400 hover:scale-110 transition-all cursor-pointer"
@@ -324,7 +397,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                     </button>
                 </div>
 
-                {/* 2. DRAG HANDLE (Top Left) */}
                 <div 
                     className="absolute top-3 left-3 z-50 p-1.5 bg-black/50 text-slate-300 rounded cursor-move opacity-0 group-hover:opacity-100 transition-opacity hover:bg-cinematic-gold hover:text-black"
                     title="按住拖动排序"
@@ -332,14 +404,13 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                      <GripVertical size={16} />
                 </div>
 
-                {/* 3. CLICKABLE CONTENT */}
                 <div 
                     onClick={() => navigate(`/universe/${universeId}/egg/${eggId}/character-studio/${char.id}`)}
                     className="block h-full w-full cursor-pointer"
                 >
                     <div className="aspect-[3/4] bg-black relative">
-                        {char.images && char.images.filter(img => !img.deletedAt).length > 0 ? (
-                            <img src={char.images.filter(img => !img.deletedAt)[0].url} alt={char.roots.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+                        {displayImage ? (
+                            <img src={displayImage.url} alt={char.roots.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
                         ) : (
                             <div className="w-full h-full flex items-center justify-center bg-cinematic-900 text-slate-600">无影像</div>
                         )}
@@ -355,10 +426,9 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                 </div>
 
               </div>
-            ))}
+            )})}
           </div>
 
-          {/* Character Trash Modal */}
           {showCharTrash && (
                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in p-4">
                  <div className="bg-cinematic-900 border border-cinematic-700 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
@@ -414,7 +484,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
         </>
       )}
 
-      {/* Scenes Tab */}
       {activeTab === 'scenes' && (
         <>
             <div className="flex justify-end mb-6">
@@ -464,7 +533,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
         </>
       )}
 
-      {/* Storyboards Tab */}
       {activeTab === 'storyboards' && (
         <>
           <div className="flex justify-end mb-6">
@@ -492,7 +560,6 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                   onDrop={(e) => handleStoryboardDrop(e, sb.id)}
                   className={`bg-cinematic-800 rounded-xl border border-cinematic-700 overflow-hidden group transition-all relative ${draggedId === sb.id ? 'opacity-50 border-cinematic-gold' : 'opacity-100 hover:border-cinematic-gold'}`}
                >
-                 {/* DRAG HANDLE */}
                  <div 
                     className="absolute top-2 left-2 z-20 p-1.5 bg-black/50 text-slate-300 rounded cursor-move opacity-0 group-hover:opacity-100 transition-opacity hover:bg-cinematic-gold hover:text-black"
                     title="按住拖动排序"

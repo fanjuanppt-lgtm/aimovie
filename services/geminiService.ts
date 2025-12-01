@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Character, CharacterRoots, CharacterShape, CharacterSoul, StoryboardFrame, Scene } from "../types";
 
@@ -228,12 +227,11 @@ const buildImageModelConfig = (modelId: string, widthRatio: string = "16:9", for
 // --- DIAGNOSTIC TOOLS ---
 
 export interface DiagnosisResult {
-  step: string;
-  status: 'success' | 'error' | 'warning';
-  message: string;
+    step: string;
+    status: 'success' | 'warning' | 'error';
+    message: string;
 }
 
-// Updated to accept params from Settings UI for live testing
 export const diagnoseNetwork = async (
     geminiKey?: string,
     imageKey?: string,
@@ -241,12 +239,9 @@ export const diagnoseNetwork = async (
     target: 'all' | 'text' | 'image' = 'all'
 ): Promise<DiagnosisResult[]> => {
     const results: DiagnosisResult[] = [];
-    
-    // 1. Determine active provider context
     const provider = deepseekConfig?.provider || 'gemini';
     const envKey = process.env.API_KEY;
 
-    // --- STEP 1: TEXT ENGINE CHECK ---
     if (target === 'all' || target === 'text') {
         const effectiveTextKey = provider === 'gemini' ? (geminiKey || envKey) : deepseekConfig?.deepseekKey;
         const getKeySource = (key?: string) => {
@@ -277,7 +272,6 @@ export const diagnoseNetwork = async (
                 }
             }
         } else {
-            // DeepSeek Check
             if (!effectiveTextKey) {
                  results.push({ step: "DeepSeek Key Check", status: 'error', message: "未输入 DeepSeek Key。" });
             } else {
@@ -302,10 +296,7 @@ export const diagnoseNetwork = async (
         }
     }
 
-    // --- STEP 2: IMAGE ENGINE CHECK (ALWAYS GEMINI) ---
     if (target === 'all' || target === 'image') {
-        // Calculate Effective Image Key with correct Fallback
-        // Priority: Manual Image Key -> Manual Gemini Key (only if using Gemini for text) -> Environment Key
         let effectiveImageKey = imageKey;
         if (!effectiveImageKey) {
              if (provider === 'gemini' && geminiKey) {
@@ -314,7 +305,6 @@ export const diagnoseNetwork = async (
                  effectiveImageKey = envKey;
              }
         }
-
         const getImageKeySource = (key?: string) => {
             if (!key) return "None";
             if (key === envKey) return "Environment (Paid Project)";
@@ -332,20 +322,16 @@ export const diagnoseNetwork = async (
         } else {
             const config = getImageConfig(effectiveImageKey); 
             const targetModel = config.modelId || 'gemini-3-pro-image-preview';
-            
             const source = getImageKeySource(effectiveImageKey);
             results.push({ step: "Image Key Source", status: 'success', message: `Using: ${source}` });
 
             try {
                 const ai = new GoogleGenAI({ apiKey: effectiveImageKey });
-                 // Lightweight request
                  const response = await ai.models.generateContent({
                      model: targetModel,
                      contents: { parts: [{ text: "dot" }] },
-                     config: buildImageModelConfig(targetModel, "1:1", false) // Small test, force4K=false
+                     config: buildImageModelConfig(targetModel, "1:1", false) 
                  });
-                 
-                 // Explicit Safety/Failure check for diagnosis
                  const candidate = response.candidates?.[0];
                  if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
                      throw new Error(`FinishReason: ${candidate.finishReason} (可能被拦截)`);
@@ -359,7 +345,6 @@ export const diagnoseNetwork = async (
             } catch (e: any) {
                  let msg = e.message || "Unknown error";
                  let status: 'error' | 'warning' = 'error';
-                 
                  if (msg.includes("403") || msg.includes("PERMISSION_DENIED")) {
                      msg = "【403 权限拒绝】需要 Billing 权限。请确保 AI Studio 项目已关联结算账户，或者切换到 Flash Image 模型。";
                  } else if (msg.includes("404")) {
@@ -369,12 +354,10 @@ export const diagnoseNetwork = async (
                  } else if (msg.includes("400")) {
                      msg = `【400 参数错误】模型不支持当前 Config (Size/Ratio)。Model: ${targetModel}`;
                  }
-        
                  results.push({ step: `图像/视觉引擎 (${targetModel})`, status: status, message: msg });
             }
         }
     }
-
     return results;
 }
 
@@ -385,9 +368,9 @@ export const generateCharacterProfile = async (
   briefDescription: string,
   role: string,
   textModelStyle: string = 'gemini-2.5-flash',
-  existingProfile?: any
+  existingProfile?: any,
+  fullScript?: string // New optional param for full script context
 ): Promise<{ roots: CharacterRoots; shape: CharacterShape; soul: CharacterSoul }> => {
-  // ... (No change logic)
   let styleInstruction = "";
   if (textModelStyle === 'jimeng-style') {
     styleInstruction = `
@@ -416,6 +399,23 @@ export const generateCharacterProfile = async (
       `;
   }
 
+  // Inject Script Context if provided
+  let scriptContext = "";
+  if (fullScript) {
+      // Truncate heavily if needed, but Gemini usually handles 1M tokens.
+      // We truncate to ~50k chars to be safe/faster for Flash models if not Pro.
+      // Actually 2.5 Flash has 1M context, so passing substantial script is fine.
+      scriptContext = `
+      【FULL SCRIPT REFERENCE / 剧本全稿参考】
+      The user has uploaded the full script for this story.
+      Please analyze the role of this character based on the script below and ensure the profile aligns with the story events, dialogue style, and arc.
+      
+      [SCRIPT START]
+      ${fullScript.substring(0, 100000)} ... (Script Truncated if > 100k chars)
+      [SCRIPT END]
+      `;
+  }
+
   const systemPrompt = `You are an expert scriptwriter assistant. You MUST output in Simplified Chinese. ${styleInstruction}`;
 
   const userPrompt = `
@@ -424,6 +424,8 @@ export const generateCharacterProfile = async (
     宇宙背景: ${universeContext}
     角色剧作定位: ${role}
     角色简述: ${briefDescription}
+
+    ${scriptContext}
 
     ${lockingInstruction}
 
@@ -454,6 +456,8 @@ export const generateCharacterProfile = async (
     throw error;
   }
 };
+
+// ... (generateCharacterVisualDescription, generateCharacterImage remain largely same) ...
 
 export const generateCharacterVisualDescription = async (
   character: Character
@@ -498,7 +502,6 @@ export const generateCharacterVisualDescription = async (
       
       const config = getTextConfig();
       if (config.provider !== 'gemini') {
-         // Fallback if provider is DeepSeek (cannot see images)
          userPrompt += "\n[NOTE] Reference image available but current text provider does not support vision. Generating based on text profile only.";
          return await generateTextViaProvider(systemPrompt, userPrompt, false);
       }
@@ -536,7 +539,6 @@ export const generateCharacterVisualDescription = async (
       }
   }
 
-  // Fallback / Text Only
   return await generateTextViaProvider(systemPrompt, userPrompt, false);
 };
 
@@ -616,8 +618,6 @@ export const generateCharacterImage = async (
     if (config.baseUrl) geminiOptions.baseUrl = config.baseUrl;
     
     const ai = new GoogleGenAI(geminiOptions);
-    
-    // Config: 3:4 for portraits.
     const gemConfig = buildImageModelConfig(effectiveModel, "3:4", true);
 
     const parts: any[] = [];
@@ -667,22 +667,51 @@ export const generateCharacterImage = async (
 export const generateSceneDescription = async (
   universeContext: string,
   sceneName: string,
-  brief: string
-): Promise<string[]> => {
+  brief: string,
+  fullScript?: string
+): Promise<string> => {
   const systemPrompt = "Expert Environment Artist. Return Simplified Chinese.";
+  
+  let scriptContext = "";
+  if (fullScript) {
+      scriptContext = `
+      [FULL SCRIPT CONTEXT / 剧本全稿参考]
+      The user provided the full script. Use this to identify specific details about this location/scene if mentioned.
+      Analyze the script to find descriptions matching "${sceneName}".
+      
+      Script: ${fullScript.substring(0, 100000)} ...
+      `;
+  }
+
   const userPrompt = `
     Universe: ${universeContext}
     Scene Name: ${sceneName}
     Draft Idea: ${brief}
     
+    ${scriptContext}
+
     Please expand this into a rich, visual environment description suitable for a 3D artist or Filmmaker. 
     Focus on lighting, textures, atmosphere, and key landmarks.
     Keep it within 200 words.
   `;
   try {
     const result = await generateTextViaProvider(systemPrompt, userPrompt, false);
-    return result as any;
+    return result;
   } catch (e) { throw e; }
+};
+
+// ... (generateSceneImage, generateScenePlotIdeas, generateStoryboardFrameImage, refineStoryboardPanel remain same) ...
+
+export const generateScenePlotIdeas = async (
+  context: string,
+  eggPremise: string,
+  sceneTitle: string,
+  sceneDescription?: string,
+  characterContexts?: string,
+  roughPlot?: string 
+): Promise<string[]> => {
+    // Legacy wrapper
+    return await generateDetailedScript(context, sceneTitle, [], roughPlot || "", 1, 4, []);
 };
 
 export const generateSceneImage = async (
@@ -707,7 +736,6 @@ export const generateSceneImage = async (
 
   let anglePrompt = viewPrompts[viewType];
   if (!anglePrompt) {
-      // For 'custom' or any other type
       anglePrompt = "Cinematic Scene Shot. Focus on the details described. Maintain consistency with the scene.";
   }
 
@@ -779,37 +807,21 @@ export const generateSceneImage = async (
   }
 };
 
-export const generateScenePlotIdeas = async (
-  context: string,
-  eggPremise: string,
-  sceneTitle: string,
-  sceneDescription?: string,
-  characterContexts?: string,
-  roughPlot?: string 
-): Promise<string[]> => {
-    // Legacy wrapper
-    return await generateDetailedScript(context, sceneTitle, [], roughPlot || "", 1, 4, []);
-};
-
-// New Type for specific shot references
+// ... (generateStoryboardFrameImage, refineStoryboardPanel code remains the same) ...
 export interface ShotReference {
-    frameIndex: number; // 0-3
+    frameIndex: number;
     charName: string;
     imageUrl: string;
 }
 
-/**
- * 2. STORYBOARD FRAME DRAWER (4K Professional - Single Image 2x2 Grid)
- * Generates a single high-quality frame containing 4 sub-frames.
- */
 export const generateStoryboardFrameImage = async (
     context: string,
     frameDescription: string,
     shotType: string,
     sceneImageUrl?: string,
     characters?: { name: string, imageUrl: string }[],
-    previousSequenceImageUrl?: string, // New: for cross-group consistency
-    shotReferences?: ShotReference[] // New: Specific references per frame
+    previousSequenceImageUrl?: string, 
+    shotReferences?: ShotReference[]
 ): Promise<string> => {
     
     let config: ImageGenConfig;
@@ -821,7 +833,6 @@ export const generateStoryboardFrameImage = async (
 
     const parts: any[] = [];
     
-    // 1. Construct Prompt Content (Text First for clear instruction)
     const prompt = `
       Role: Storyboard Drawing Master (分镜绘制大师).
       Task: Create a Single Image containing a 2x2 Grid of 4 Storyboard Frames.
@@ -830,7 +841,7 @@ export const generateStoryboardFrameImage = async (
       1.  **Grid**: Exactly 2 rows and 2 columns (Total 4 frames).
       2.  **Ratio**: Each individual frame inside the grid MUST be **16:9 aspect ratio**.
       3.  **Sizing**: All 4 frames must be of identical size and alignment.
-      4.  **NO OVERLAYS**: **ABSOLUTELY NO FRAME NUMBERS (1, 2, 3, 4) OR META-LABELS.** Do not add UI overlays like "1", "2" in corners.
+      4.  **NO OVERLAYS**: **ABSOLUTELY NO FRAME NUMBERS (1, 2, 3, 4) OR META-LABELS.** Do not add frame numbers like "1", "2" in corners.
       5.  **DIEGETIC TEXT ALLOWED**: Text that naturally exists inside the scene (e.g., street signs, phone screens, newspapers) IS ALLOWED and should be rendered realistically if described.
       
       [VISUAL STYLE & CONSISTENCY]
@@ -865,7 +876,6 @@ export const generateStoryboardFrameImage = async (
 
     parts.push({ text: prompt });
 
-    // 2. Attach Reference Images
     if (sceneImageUrl) {
         const { mimeType, data } = extractDataUri(sceneImageUrl);
         parts.push({ text: "[SCENE MASTER REFERENCE] Use this exact location/style." });
@@ -878,7 +888,6 @@ export const generateStoryboardFrameImage = async (
         parts.push({ inlineData: { mimeType, data } });
     }
 
-    // 3. Attach Character References (General/Base)
     if (characters && characters.length > 0) {
         for (const char of characters) {
             const { mimeType, data } = extractDataUri(char.imageUrl);
@@ -887,7 +896,6 @@ export const generateStoryboardFrameImage = async (
         }
     }
     
-    // 4. Attach Specific Shot References (NEW)
     if (shotReferences && shotReferences.length > 0) {
         for (const ref of shotReferences) {
             const { mimeType, data } = extractDataUri(ref.imageUrl);
@@ -899,8 +907,6 @@ export const generateStoryboardFrameImage = async (
     const geminiOptions: any = { apiKey: config.apiKey };
     if (config.baseUrl) geminiOptions.baseUrl = config.baseUrl;
     const ai = new GoogleGenAI(geminiOptions);
-    
-    // Use dynamic config based on model
     const gemConfig = buildImageModelConfig(effectiveModel, "16:9", true);
 
     try {
@@ -913,7 +919,6 @@ export const generateStoryboardFrameImage = async (
 
         const candidate = response.candidates?.[0];
         
-        // --- SAFETY BLOCK CHECK ---
         if (candidate?.finishReason === 'SAFETY') {
              throw new Error("生成失败：由于安全策略拦截 (Safety Block)，模型拒绝生成该图像。请尝试修改 Prompt 或去除敏感词。");
         }
@@ -949,10 +954,6 @@ export const generateStoryboardFrameImage = async (
     }
 };
 
-/**
- * Refines a specific panel in the 2x2 Storyboard Grid.
- * Keeps all other panels strictly identical.
- */
 export const refineStoryboardPanel = async (
     originalImageUrl: string,
     panelNumber: number,
@@ -964,10 +965,7 @@ export const refineStoryboardPanel = async (
     } catch (e) { throw e; }
 
     const effectiveModel = config.modelId || 'gemini-3-pro-image-preview';
-
     const parts: any[] = [];
-
-    // Attach Original Image
     const { mimeType, data } = extractDataUri(originalImageUrl);
     parts.push({ inlineData: { mimeType, data } });
     parts.push({ text: "SOURCE IMAGE: Current 4-frame storyboard sheet." });
@@ -994,11 +992,9 @@ export const refineStoryboardPanel = async (
     `;
 
     parts.push({ text: prompt });
-
     const geminiOptions: any = { apiKey: config.apiKey };
     if (config.baseUrl) geminiOptions.baseUrl = config.baseUrl;
     const ai = new GoogleGenAI(geminiOptions);
-    
     const gemConfig = buildImageModelConfig(effectiveModel, "16:9", true);
 
     try {
@@ -1066,7 +1062,8 @@ export const generateDetailedScript = async (
   roughPlot: string,
   startIndex: number = 1,
   count: number = 4,
-  availableCharacters: Character[] = [] // New: Pass available characters for detailed prompt context
+  availableCharacters: Character[] = [], 
+  fullScript?: string // New optional param for full script context
 ): Promise<string[]> => {
   const systemPrompt = "You are a World-Class Film Director and Cinematographer. Your task is to create a visually stunning, artistic, and character-driven 4-shot storyboard script.";
   
@@ -1078,17 +1075,19 @@ export const generateDetailedScript = async (
     - PERSONALITY/BEHAVIOR: ${c.soul.corePersonality}. Habits: ${c.shape.habits}. Body Language: ${c.shape.bodyLanguage}
   `).join('\n') : "No specific character profiles provided.";
 
-  // Build formatted locked list
-  const lockedList = existingShots
-      .filter(s => s.isLocked)
-      .map(s => `Shot ${s.id}: ${s.content}`)
-      .join('\n');
-      
+  const lockedList = existingShots.filter(s => s.isLocked).map(s => `Shot ${s.id}: ${s.content}`).join('\n');
   const previousShotsContext = existingShots.filter(s => s.id < startIndex && s.content).map(s => `Shot ${s.id}: ${s.content}`).join('\n');
-
-  // Build current range themes
   const currentRange = existingShots.slice(startIndex - 1, startIndex + count - 1);
   const themeContext = currentRange.map(s => `Shot ${s.id} Theme: ${s.theme || 'Open/Auto'}`).join('\n');
+
+  let scriptContext = "";
+  if (fullScript) {
+      scriptContext = `
+      [FULL SCRIPT CONTEXT / 剧本全稿参考]
+      Use the script below to guide the action of the shots if relevant scenes are found (Scene: ${sceneTitle}).
+      ${fullScript.substring(0, 100000)} ...
+      `;
+  }
 
   const userPrompt = `
     Context: ${context}
@@ -1096,6 +1095,8 @@ export const generateDetailedScript = async (
     
     ${roughPlot ? `Rough Concept: ${roughPlot}` : ''}
     
+    ${scriptContext}
+
     [CHARACTER BIBLE - STRICT VISUAL & BEHAVIORAL CONSISTENCY]
     ${characterBible}
     
@@ -1137,7 +1138,6 @@ export const generateDetailedScript = async (
     const rawText = await generateTextViaProvider(systemPrompt, userPrompt, true, schema);
     let arr = cleanAndParseJSON(rawText);
     
-    // Safety check for object wrapper vs array
     if (!Array.isArray(arr) && typeof arr === 'object' && arr !== null) {
         if (Array.isArray(arr.shots)) arr = arr.shots;
         else if (Array.isArray(arr.frames)) arr = arr.frames;
@@ -1149,11 +1149,9 @@ export const generateDetailedScript = async (
         return Array(count).fill("AI 生成格式错误，请重试。");
     }
 
-    // Pad or Slice
     while(arr.length < count) arr.push(`[Detail] Continue action...`);
     if (arr.length > count) arr = arr.slice(0, count);
     
-    // Ensure strings
     return arr.map((item: any) => typeof item === 'string' ? item : JSON.stringify(item));
 
   } catch (e) {
@@ -1162,13 +1160,7 @@ export const generateDetailedScript = async (
   }
 };
 
-/**
- * New Service: Polish a single shot's text
- */
-export const polishShotText = async (
-    context: string,
-    currentContent: string
-): Promise<string> => {
+export const polishShotText = async (context: string, currentContent: string): Promise<string> => {
     const systemPrompt = "You are an Award-Winning Screenwriter and Director. Polish this shot description to be a masterpiece of visual storytelling.";
     const userPrompt = `
       Context: ${context}
@@ -1183,6 +1175,5 @@ export const polishShotText = async (
       - Language: Simplified Chinese.
       - Return ONLY the raw string of the new description.
     `;
-    
     return await generateTextViaProvider(systemPrompt, userPrompt, false);
 };
