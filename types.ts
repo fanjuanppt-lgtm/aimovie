@@ -1,4 +1,13 @@
 
+// User Authentication Types
+export interface UserProfile {
+  id: string;
+  username: string;
+  password?: string; // In a real app, never store plain text passwords. This is for local simulation only.
+  avatar?: string;
+  createdAt: Date;
+}
+
 // Universe Types
 export enum UniverseType {
   REAL = '真实宇宙',
@@ -9,87 +18,157 @@ export enum UniverseType {
 
 export interface Universe {
   id: string;
+  ownerId: string; // New: Data Isolation
   name: string;
   type: UniverseType;
   description: string;
   rules: string;
+  coverImage?: string; 
+  orderIndex?: number;
   createdAt: Date;
 }
 
 // New Hierarchy Level: Story Egg
 export interface StoryEgg {
   id: string;
+  ownerId: string; // New: Data Isolation
   universeId: string;
   title: string;
-  premise: string; // 一句话故事梗概
+  premise: string; 
   createdAt: Date;
 }
 
-// Character Types based on the user's detailed request
+// Character Types
 export interface CharacterRoots {
   name: string;
   age: string;
   gender: string;
-  origin: string; // 国籍/出身
+  origin: string; 
   familyBackground: string;
   socialClass: string;
   educationJob: string;
 }
 
 export interface CharacterShape {
-  appearance: string; // 外貌特征
-  fashion: string; // 着装风格
-  bodyLanguage: string; // 肢体语言
-  habits: string; // 习惯与癖好
+  appearance: string; 
+  fashion: string; 
+  bodyLanguage: string; 
+  habits: string; 
 }
 
 export interface CharacterSoul {
-  corePersonality: string; // 核心性格
-  moralCompass: string; // 道德罗盘
-  desires: string; // 欲望与目标
-  fears: string; // 恐惧与弱点
-  innerConflict: string; // 内在矛盾
+  corePersonality: string; 
+  moralCompass: string; 
+  desires: string; 
+  fears: string; 
+  innerConflict: string; 
 }
 
 export interface CharacterImage {
   id: string;
   url: string;
   prompt: string;
-  angle: string; // e.g., "Front View", "Side View", "Close up"
+  angle: string; 
+  deletedAt?: string; 
+}
+
+export interface ShotDef {
+    id: string; 
+    label: string; 
+    prompt: string; 
 }
 
 export interface Character {
   id: string;
+  ownerId: string; // New: Data Isolation
   universeId: string;
-  storyEggId: string; // Linked to a specific story egg
+  storyEggId: string; 
   roots: CharacterRoots;
   shape: CharacterShape;
   soul: CharacterSoul;
-  summary: string; // Short description for prompts
+  summary: string; 
+  visualDescription?: string; 
   images: CharacterImage[];
+  customShots?: ShotDef[]; 
+  shotDefs?: ShotDef[]; 
+  deletedAt?: string; 
+  orderIndex?: number; 
+}
+
+// Scene Types
+export interface SceneImage {
+  id?: string; 
+  type: string; 
+  url: string;
+}
+
+export interface Scene {
+  id: string;
+  ownerId: string; // New: Data Isolation
+  universeId: string;
+  storyEggId: string;
+  name: string;
+  description: string;
+  images: SceneImage[];
+  shotDefs?: ShotDef[]; 
+  createdAt: Date;
 }
 
 // Storyboard Types
+
+export interface FrameCharacter {
+  characterId: string;
+  priority: number; 
+}
+
 export interface StoryboardFrame {
   id: string;
-  shotType: string; // e.g., "Close-up", "Wide Shot"
-  cameraMovement: string; // e.g., "Pan Left", "Static"
-  description: string; // Visual description of the frame
-  imageUrl?: string; // Generated image
+  groupIndex: number; 
+  shotType: string; 
+  cameraMovement: string; 
+  description: string; 
+  facialExpression?: string; 
+  characters?: FrameCharacter[]; 
+  
+  sketchUrl?: string; 
+  imageUrl?: string; 
+  imageState?: 'preview' | 'final'; 
+  imageHistory?: string[]; 
+  
+  deletedImageUrl?: string; 
+  masterSliceUrl?: string; 
+}
+
+export interface ScriptShot {
+  id: number;
+  theme: string; 
+  content: string;
+  isLocked: boolean;
+  characterIds?: string[];
+  selectedImageIds?: Record<string, string>; 
+  isPolishing?: boolean; 
 }
 
 export interface Storyboard {
   id: string;
+  ownerId: string; // New: Data Isolation
   universeId: string;
   storyEggId: string;
-  title: string; // Scene title
-  plotSummary: string; // The input plot
+  sceneId?: string; 
+  title: string; 
+  sceneSummary?: string; 
+  participatingCharacterIds?: string[]; 
+  plotSummary: string; 
+  shots?: ScriptShot[]; 
   frames: StoryboardFrame[];
+  
+  masterSheetUrl?: string; 
+  orderIndex?: number; 
   createdAt: Date;
 }
 
 export interface GenerationState {
   isLoading: boolean;
-  status: string; // e.g., "Thinking...", "Generating Image 1/4..."
+  status: string; 
   error?: string;
 }
