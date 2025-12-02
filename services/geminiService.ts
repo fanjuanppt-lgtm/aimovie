@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { GoogleGenAI, Type, Schema, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { Character, CharacterRoots, CharacterShape, CharacterSoul, StoryboardFrame, Scene } from "../types";
 
 // --- CONFIGURATION TYPES ---
@@ -185,9 +185,6 @@ const compressImagePayload = async (dataUri: string): Promise<string> => {
                     w = Math.round((w * maxDim) / h);
                     h = maxDim;
                 }
-            } else {
-                // If small enough, check if we need to convert to JPEG to save space (e.g. from massive PNG)
-                // For simplicity, we always redraw to ensure clean JPEG output
             }
             
             const canvas = document.createElement('canvas');
@@ -326,10 +323,20 @@ const cleanAndParseJSON = (text: string) => {
 
 // --- HELPER: CONSTRUCT IMAGE CONFIG ---
 const buildImageModelConfig = (modelId: string, widthRatio: string = "16:9", force4K: boolean = true) => {
+    // CRITICAL: Disable safety filters to prevent false positives in creative writing/storyboarding
+    const safetySettings = [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
+    ];
+
     const config: any = {
         imageConfig: {
             aspectRatio: widthRatio,
-        }
+        },
+        safetySettings
     };
 
     // Only Gemini 3 Pro supports explicit '4K' sizing
@@ -363,13 +370,8 @@ const generateImageContentWithFallback = async (
     } catch (error: any) {
         const msg = error.message || error.toString();
         
-        // 1. Critical Auth/Safety Errors - DO NOT FALLBACK
-        if (
-            msg.includes("SAFETY") || 
-            msg.includes("safety") || 
-            msg.includes("blocked") ||
-            msg.includes("API key not valid")
-        ) {
+        // 1. Critical Auth Errors - DO NOT FALLBACK
+        if (msg.includes("API key not valid")) {
             throw error;
         }
 
@@ -380,10 +382,27 @@ const generateImageContentWithFallback = async (
              throw error; 
         }
 
-        // 3. Capacity/Model Errors/403/Payload - TRY FALLBACK
-        // If it was the PRO model failing (due to quota, 503, 500, 403 etc), try FLASH
+        // 3. Fallback Logic for Capacity/Model Errors/403/Payload
         if (model.includes('gemini-3-pro')) {
-            console.warn(`[Gemini Service] Primary model ${model} failed (${msg}). Auto-falling back to gemini-2.5-flash-image.`);
+            console.warn(`[Gemini Service] Primary model ${model} failed (${msg}).`);
+            
+            // 3a. INTERMEDIATE RETRY: Try 3-Pro again but without 4K (sometimes resolution is the blocker)
+            if (force4K) {
+                 console.log(`[Gemini Service] Retrying with ${model} (Standard Res)...`);
+                 try {
+                     const standardResConfig = buildImageModelConfig(model, widthRatio, false);
+                     return await ai.models.generateContent({
+                        model: model,
+                        contents: payload.contents,
+                        config: standardResConfig
+                     });
+                 } catch (retryErr) {
+                     console.warn(`[Gemini Service] Standard Res retry failed.`);
+                 }
+            }
+
+            // 3b. FINAL FALLBACK: Flash
+            console.warn(`[Gemini Service] Auto-falling back to gemini-2.5-flash-image.`);
             const fallbackModel = 'gemini-2.5-flash-image';
             
             // Flash doesn't support 'imageSize: 4K', so rebuild config without it
@@ -556,9 +575,9 @@ export const generateCharacterImage = async (
 
     const result = await generateImageContentWithFallback(ai, model, { contents: { parts } }, widthRatio, true);
 
-    // 5. Extract Image
-    if (result.response.candidates && result.response.candidates[0].content.parts) {
-        for (const part of result.response.candidates[0].content.parts) {
+    // 5. Extract Image - NEW SDK (candidates at root)
+    if (result.candidates && result.candidates[0].content.parts) {
+        for (const part of result.candidates[0].content.parts) {
             if (part.inlineData) {
                 return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
             }
@@ -617,8 +636,8 @@ export const generateSceneImage = async (
 
     const result = await generateImageContentWithFallback(ai, model, { contents: { parts } }, "16:9", true);
 
-    if (result.response.candidates && result.response.candidates[0].content.parts) {
-        for (const part of result.response.candidates[0].content.parts) {
+    if (result.candidates && result.candidates[0].content.parts) {
+        for (const part of result.candidates[0].content.parts) {
             if (part.inlineData) {
                 return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
             }
@@ -716,10 +735,10 @@ export const generateStoryboardFrameImage = async (
     - Maintain character consistency across panels.
     `;
 
-    // 2. Add References
+    // 2. Add References (SMART LIMITING APPLIED)
     const parts: any[] = [];
     
-    // 2a. Scene Reference
+    // 2a. Scene Reference (High Priority)
     if (sceneImageUrl) {
         try {
             const compressedScene = await compressImagePayload(sceneImageUrl);
@@ -729,9 +748,12 @@ export const generateStoryboardFrameImage = async (
         } catch(e) {}
     }
 
-    // 2b. Character References (General)
+    // 2b. Character References (LIMITED to top 2 to avoid payload overload)
     if (characters && characters.length > 0) {
-        for (const char of characters) {
+        // Only take up to 2 characters to keep payload reasonable
+        const limitChars = characters.slice(0, 2);
+        
+        for (const char of limitChars) {
             try {
                 const compressedChar = await compressImagePayload(char.imageUrl);
                 const { mimeType, data } = extractDataUri(compressedChar);
@@ -768,8 +790,8 @@ export const generateStoryboardFrameImage = async (
 
     const result = await generateImageContentWithFallback(ai, model, { contents: { parts } }, aspectRatio, true);
 
-    if (result.response.candidates && result.response.candidates[0].content.parts) {
-        for (const part of result.response.candidates[0].content.parts) {
+    if (result.candidates && result.candidates[0].content.parts) {
+        for (const part of result.candidates[0].content.parts) {
             if (part.inlineData) {
                 return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
             }
@@ -805,8 +827,8 @@ export const refineStoryboardPanel = async (
 
     const result = await generateImageContentWithFallback(ai, model, { contents: { parts } }, "16:9", true);
 
-    if (result.response.candidates && result.response.candidates[0].content.parts) {
-        for (const part of result.response.candidates[0].content.parts) {
+    if (result.candidates && result.candidates[0].content.parts) {
+        for (const part of result.candidates[0].content.parts) {
             if (part.inlineData) {
                 return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
             }
@@ -873,15 +895,11 @@ export const diagnoseNetwork = async (
             logs.push({ step: 'Model Check', status: 'success', message: `Ready to generate images (${model}). Cost applies.` });
             
             // Real generation test (1x1 pixel or very simple)
-            const result = await ai.models.generateContent({
-                model,
-                contents: { parts: [{ text: "Draw a simple red box." }] },
-                config: {
-                    imageConfig: { aspectRatio: "1:1" }
-                }
-            });
+            const result = await generateImageContentWithFallback(ai, model, { 
+                contents: { parts: [{ text: "Draw a simple red box." }] }
+            }, "1:1", false);
             
-            if (result.response.candidates && result.response.candidates[0].content.parts.some((p: any) => p.inlineData)) {
+            if (result.candidates && result.candidates[0].content.parts.some((p: any) => p.inlineData)) {
                  logs.push({ step: 'Visual Gen', status: 'success', message: 'Image successfully generated.' });
             } else {
                  logs.push({ step: 'Visual Gen', status: 'error', message: 'Model returned no image data.' });

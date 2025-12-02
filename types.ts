@@ -116,6 +116,7 @@ export interface Scene {
   images: SceneImage[];
   shotDefs?: ShotDef[]; 
   createdAt: Date;
+  orderIndex?: number;
 }
 
 // Storyboard Types

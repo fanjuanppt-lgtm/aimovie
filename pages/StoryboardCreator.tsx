@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Universe, StoryEgg, Character, Storyboard, Scene, StoryboardFrame, ScriptShot } from '../types';
 import { generateDetailedScript, generateStoryboardFrameImage, refineStoryboardPanel, polishShotText, ShotReference } from '../services/geminiService';
-import { ArrowLeft, Clapperboard, Loader2, Save, Sparkles, Map, ZoomIn, X, Users, Wand2, PenTool, FileText, Settings2, Grid, Lock, Unlock, History, GitCompare, ArrowRightLeft, PlusCircle, Film, User, Check, Cloud, ChevronDown, ChevronUp, Eye, Layout, CheckCircle, Smartphone, Monitor } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Loader2, Save, Sparkles, Map, ZoomIn, X, Users, Wand2, PenTool, FileText, Settings2, Grid, Lock, Unlock, History, GitCompare, ArrowRightLeft, PlusCircle, Film, User, Check, Cloud, ChevronDown, ChevronUp, Eye, Layout, CheckCircle, Smartphone, Monitor, AlertCircle } from 'lucide-react';
 
 interface StoryboardCreatorProps {
   universes: Universe[];
@@ -412,10 +412,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
 
       setIsGeneratingMap(prev => ({ ...prev, [groupIndex]: true }));
 
-      const groupCharIds = new Set<string>();
-      targetShots.forEach(s => s.characterIds?.forEach(id => groupCharIds.add(id)));
-      const groupCharacters = availableCharacters.filter(c => groupCharIds.has(c.id));
-
+      // Prepare Script for Prompt (Formatted)
       const formattedScript = targetShots.map((s, i) => {
           let cleanContent = s.content.replace(/^\d+[\.\:：]\s*/, '').trim();
           if (!cleanContent) cleanContent = "Static shot. No specific action.";
@@ -430,76 +427,63 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
           return `Frame ${i + 1}: ${themeContext}${charPrefix}${cleanContent}`;
       }).join('\n');
 
+      // Prepare Shot References from selections
+      const shotRefs: ShotReference[] = [];
+      targetShots.forEach((s, idx) => {
+          if (s.selectedImageIds) {
+              Object.entries(s.selectedImageIds).forEach(([charId, imgId]) => {
+                  const char = availableCharacters.find(c => c.id === charId);
+                  const img = char?.images.find(i => i.id === imgId);
+                  if (char && img) {
+                      shotRefs.push({
+                          frameIndex: idx, // 0 to 3 relative to group
+                          charName: char.roots.name,
+                          imageUrl: img.url
+                      });
+                  }
+              });
+          }
+      });
+
+      // Prepare Characters for General Ref (Characters appearing in this group)
+      // We collect unique characters appearing in this group to pass as general style reference
+      // Service will limit to top 2 to avoid payload issues.
+      const charsInGroup = new Set<string>();
+      targetShots.forEach(s => s.characterIds?.forEach(id => charsInGroup.add(id)));
+      const charRefs = availableCharacters
+          .filter(c => charsInGroup.has(c.id))
+          .map(c => {
+               // Prefer cover image, else first valid image
+               const img = c.images.find(i => i.id === c.coverImageId) || c.images.find(i => !i.deletedAt);
+               return { name: c.roots.name, imageUrl: img?.url || '' };
+          })
+          .filter(c => !!c.imageUrl);
+      
+      // Resolve Scene Image for this Group (Override > Global > None)
+      let currentGroupSceneUrl = null;
+      if (groupSceneOverrides[groupIndex]) {
+            currentGroupSceneUrl = groupSceneOverrides[groupIndex];
+      } else if (activeSceneObj) {
+            const main = activeSceneObj.images.find(i => i.type === 'main');
+            if (main) currentGroupSceneUrl = main.url;
+      }
+
+      // Context construction
+      const context = `Universe: ${universe.name} (${universe.type}). Story: ${egg.title}. Scene: ${sceneTitle}. ${roughPlot}`;
+
       try {
-          const context = `Universe: ${universe.name}, ${universe.type}. Story: ${egg.title}`;
-          
-          // Determine Scene Context Image
-          let sceneImageUrl = undefined;
-          
-          // Priority 1: Group Override
-          if (groupSceneOverrides[groupIndex]) {
-               sceneImageUrl = groupSceneOverrides[groupIndex];
-          } 
-          // Priority 2: Global Scene "Main" image
-          else if (selectedSceneId) {
-             const scene = scenes.find(s => s.id === selectedSceneId);
-             if (scene) {
-                 const mainImg = scene.images.find(i => i.type === 'main');
-                 if (mainImg) sceneImageUrl = mainImg.url;
-             }
-          }
-          
-          let previousGroupImageUrl = undefined;
-          if (groupIndex > 0) {
-              const prevFrame = generatedFrames[groupIndex - 1];
-              if (prevFrame && prevFrame.imageUrl) {
-                  previousGroupImageUrl = prevFrame.imageUrl;
-              }
-          }
+         const imageUrl = await generateStoryboardFrameImage(
+            context,
+            formattedScript,
+            "cinematic", // Internal style hint, effectively overridden by stylePreset
+            currentGroupSceneUrl || undefined,
+            charRefs,
+            groupIndex > 0 ? generatedFrames[groupIndex - 1]?.imageUrl : undefined,
+            shotRefs,
+            targetAspectRatio,
+            egg.visualStyle // stylePreset
+         );
 
-          const charPayload = groupCharacters.map(c => {
-            // New logic: Check if cover image is set, otherwise default to 01
-            let refImg = c.images.find(img => img.id === c.coverImageId);
-            if (!refImg) refImg = c.images.find(img => img.angle.startsWith('01')) || c.images[0];
-
-            return { name: c.roots.name, imageUrl: refImg ? refImg.url : '' };
-          }).filter(c => !!c.imageUrl);
-
-          const shotReferences: ShotReference[] = [];
-          targetShots.forEach((s, i) => {
-              if (s.characterIds && s.selectedImageIds) {
-                  s.characterIds.forEach(charId => {
-                      const imgId = s.selectedImageIds![charId];
-                      if (imgId) {
-                          const char = availableCharacters.find(c => c.id === charId);
-                          const img = char?.images.find(img => img.id === imgId);
-                          if (char && img) {
-                              shotReferences.push({
-                                  frameIndex: i, 
-                                  charName: char.roots.name,
-                                  imageUrl: img.url
-                              });
-                          }
-                      }
-                  });
-              }
-          });
-
-          console.log(`Generating Group ${groupIndex} (Shots ${startIndex+1}-${startIndex+4})`);
-          
-          // Pass targetAspectRatio to the service
-          const imageUrl = await generateStoryboardFrameImage(
-              context,
-              formattedScript,
-              "Cinematic",
-              sceneImageUrl,
-              charPayload,
-              previousGroupImageUrl,
-              shotReferences,
-              targetAspectRatio,
-              egg?.visualStyle // Pass Global Style
-          );
-          
           const currentFrames = [...framesRef.current];
           
           while(currentFrames.length <= groupIndex) {
@@ -517,7 +501,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
           currentFrames[groupIndex] = {
               id: existingFrame?.id || Date.now().toString(),
               groupIndex: groupIndex,
-              shotType: "2x2 Grid 4K",
+              shotType: `2x2 Grid ${targetAspectRatio}`,
               cameraMovement: "Static",
               description: formattedScript,
               characters: [],
@@ -531,13 +515,19 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
 
       } catch (e: any) {
           console.error(e);
-          alert(`生成失败: ${e.message}\n如果是权限错误，请检查 Settings 中是否配置了带 Billing 的 Project Key。`);
+          const msg = e.message || '';
+          if (msg.includes('Safety') || msg.includes('SAFETY')) {
+              alert("生成失败：触发安全拦截 (Safety Block)。\n请尝试修改剧本中过于暴力或敏感的描述。");
+          } else if (msg.includes('429') || msg.includes('Overloaded')) {
+              alert("生成失败：模型过载 (Overloaded)。\n请稍等几秒后重试。");
+          } else {
+              alert(`生成失败: ${msg}`);
+          }
       } finally {
           setIsGeneratingMap(prev => ({ ...prev, [groupIndex]: false }));
       }
   };
 
-  // ... (handleRefinePanel, handleSwitchVersion, handleManualSave etc remain same) ...
   const handleRefinePanel = async () => {
       if (activeRefineGroupIndex === null) return;
       if (!refineInstruction) return alert("请输入修改指令");
@@ -549,7 +539,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
       try {
           const refinedImageUrl = await refineStoryboardPanel(
               currentFrame.imageUrl,
-              refinePanelNum, 
+              refinePanelNum,
               refineInstruction
           );
           
@@ -569,7 +559,6 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
 
           setGeneratedFrames(currentFrames);
           setRefineInstruction("");
-          alert(`第 ${activeRefineGroupIndex + 1} 组 - #${refinePanelNum} 号分镜微调完成！`);
           setComparingImage(oldUrl); 
           setCompareTargetGroup(activeRefineGroupIndex);
 
@@ -801,3 +790,462 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
                             <Monitor size={14} /> 电影横屏 (16:9)
                         </button>
                         <button
+                            onClick={() => setTargetAspectRatio("9:16")}
+                            className={`flex-1 py-2 rounded-md text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                                targetAspectRatio === "9:16" 
+                                ? "bg-cinematic-700 text-white shadow-md" 
+                                : "text-slate-500 hover:text-slate-300"
+                            }`}
+                        >
+                            <Smartphone size={14} /> 短剧竖屏 (9:16)
+                        </button>
+                    </div>
+                </div>
+             </div>
+
+             {/* CAST SELECTION */}
+             <div className="bg-cinematic-900/30 p-4 rounded-lg border border-cinematic-700/50">
+                 <label className="block text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1"><Users size={12}/> 本场参演角色 (Cast)</label>
+                 <div className="flex flex-wrap gap-2">
+                     {availableCharacters.map(char => {
+                         const isSelected = participatingCharIds.includes(char.id);
+                         return (
+                             <button
+                                key={char.id}
+                                onClick={() => toggleParticipatingChar(char.id)}
+                                className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 border transition-all ${
+                                    isSelected 
+                                    ? 'bg-cinematic-gold/20 text-cinematic-gold border-cinematic-gold' 
+                                    : 'bg-cinematic-900 text-slate-500 border-cinematic-700 hover:border-slate-500'
+                                }`}
+                             >
+                                 <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-cinematic-gold' : 'bg-slate-600'}`} />
+                                 {char.roots.name}
+                             </button>
+                         )
+                     })}
+                     {availableCharacters.length === 0 && <span className="text-xs text-slate-600">无可用角色，请在角色工坊创建。</span>}
+                 </div>
+             </div>
+        </div>
+
+        {/* SHOT GROUPS */}
+        {Array.from({ length: totalGroups }).map((_, groupIndex) => {
+            const groupShots = scriptShots.slice(groupIndex * SHOTS_PER_GROUP, (groupIndex + 1) * SHOTS_PER_GROUP);
+            const frameData = generatedFrames[groupIndex]; // This holds the 2x2 Image
+            
+            // Resolve Scene Image for this Group (Override > Global > None)
+            let currentGroupSceneUrl = null;
+            if (groupSceneOverrides[groupIndex]) {
+                 currentGroupSceneUrl = groupSceneOverrides[groupIndex];
+            } else if (activeSceneObj) {
+                 const main = activeSceneObj.images.find(i => i.type === 'main');
+                 if (main) currentGroupSceneUrl = main.url;
+            }
+
+            return (
+                <div key={groupIndex} className="bg-cinematic-800 border border-cinematic-700 rounded-xl overflow-hidden shadow-xl animate-in slide-in-from-bottom-4">
+                    {/* GROUP HEADER */}
+                    <div className="bg-cinematic-900/80 p-3 border-b border-cinematic-700 flex justify-between items-center">
+                         <div className="flex items-center gap-3">
+                             <span className="bg-cinematic-700 text-white px-2 py-1 rounded text-xs font-bold">Group {groupIndex + 1}</span>
+                             <span className="text-slate-500 text-xs">Shots {groupIndex * SHOTS_PER_GROUP + 1} - {(groupIndex + 1) * SHOTS_PER_GROUP}</span>
+                         </div>
+                         <div className="flex gap-1">
+                              <button 
+                                 onClick={() => handleMoveGroup(groupIndex, 'up')}
+                                 disabled={groupIndex === 0}
+                                 className="p-1.5 text-slate-500 hover:text-white disabled:opacity-30"
+                              >
+                                  <ArrowRightLeft className="-rotate-90" size={14} />
+                              </button>
+                              <button 
+                                 onClick={() => handleMoveGroup(groupIndex, 'down')}
+                                 disabled={groupIndex === totalGroups - 1}
+                                 className="p-1.5 text-slate-500 hover:text-white disabled:opacity-30"
+                              >
+                                  <ArrowRightLeft className="rotate-90" size={14} />
+                              </button>
+                         </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row">
+                        {/* LEFT: SCRIPTING (4 Shots) */}
+                        <div className="flex-1 p-6 border-r border-cinematic-700 space-y-6">
+                            <div className="flex justify-between items-center mb-2">
+                                <h3 className="text-sm font-bold text-white flex items-center gap-2"><FileText size={16}/> 剧本脚本</h3>
+                                <button 
+                                    onClick={() => handleAIScriptGen(groupIndex)}
+                                    disabled={isBrainstorming}
+                                    className="text-xs bg-cinematic-700 hover:bg-cinematic-600 text-cinematic-gold px-3 py-1.5 rounded flex items-center gap-1 disabled:opacity-50 transition-colors"
+                                >
+                                    {isBrainstorming ? <Loader2 className="animate-spin" size={12}/> : <Sparkles size={12}/>} 
+                                    AI 灵感生成
+                                </button>
+                            </div>
+
+                            <div className="space-y-4">
+                                {groupShots.map((shot, i) => {
+                                    const realIndex = groupIndex * SHOTS_PER_GROUP + i;
+                                    return (
+                                        <div key={shot.id} className="bg-cinematic-900/50 p-3 rounded-lg border border-cinematic-700/50">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-cinematic-gold font-bold text-xs w-6">{shot.id}.</span>
+                                                    <select 
+                                                        value={shot.theme}
+                                                        onChange={(e) => updateShotTheme(realIndex, e.target.value)}
+                                                        className="bg-cinematic-800 text-slate-300 text-[10px] rounded px-1 py-0.5 border border-cinematic-700 outline-none w-28"
+                                                    >
+                                                        <option value="">- 镜头景别 -</option>
+                                                        {SHOT_SCALES.map(s => <option key={s} value={s}>{s}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                     {/* Char Selector Trigger */}
+                                                     <div className="flex -space-x-1">
+                                                         {shot.characterIds?.map(cid => {
+                                                             const c = availableCharacters.find(ch => ch.id === cid);
+                                                             if (!c) return null;
+                                                             // Check if specific image selected
+                                                             const hasImg = !!shot.selectedImageIds?.[cid];
+                                                             return (
+                                                                 <div 
+                                                                    key={cid} 
+                                                                    onClick={() => setActiveImageSelector({ shotIndex: realIndex, charId: cid })}
+                                                                    className={`w-5 h-5 rounded-full border border-cinematic-800 bg-slate-700 flex items-center justify-center text-[8px] cursor-pointer hover:z-10 relative ${hasImg ? 'ring-1 ring-green-500' : ''}`}
+                                                                    title={c.roots.name}
+                                                                 >
+                                                                     {c.roots.name[0]}
+                                                                     {hasImg && <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-green-500 rounded-full"></div>}
+                                                                 </div>
+                                                             )
+                                                         })}
+                                                         <button 
+                                                            onClick={(e) => {
+                                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                                // Simple toggle menu logic could go here, or just a dropdown
+                                                            }}
+                                                            className="w-5 h-5 rounded-full bg-cinematic-800 border border-cinematic-700 flex items-center justify-center text-slate-400 hover:text-white hover:bg-cinematic-700"
+                                                         >
+                                                             <PlusCircle size={10} />
+                                                         </button>
+                                                         {/* Custom Dropdown for Characters */}
+                                                         <select 
+                                                            className="w-5 h-5 opacity-0 absolute cursor-pointer"
+                                                            onChange={(e) => {
+                                                                if(e.target.value) toggleCharForShot(realIndex, e.target.value);
+                                                                e.target.value = "";
+                                                            }}
+                                                         >
+                                                             <option value="">Add</option>
+                                                             {activeCast.map(c => (
+                                                                 <option key={c.id} value={c.id}>{c.roots.name}</option>
+                                                             ))}
+                                                         </select>
+                                                     </div>
+
+                                                    <button 
+                                                        onClick={() => handlePolishShot(realIndex)}
+                                                        disabled={shot.isPolishing || !shot.content}
+                                                        className="p-1 hover:bg-cinematic-800 rounded text-slate-500 hover:text-cinematic-gold" 
+                                                        title="AI 润色"
+                                                    >
+                                                        {shot.isPolishing ? <Loader2 className="animate-spin" size={12}/> : <Wand2 size={12}/>}
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => toggleShotLock(realIndex)}
+                                                        className={`p-1 hover:bg-cinematic-800 rounded ${shot.isLocked ? 'text-cinematic-gold' : 'text-slate-600'}`}
+                                                    >
+                                                        {shot.isLocked ? <Lock size={12}/> : <Unlock size={12}/>}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <textarea 
+                                                value={shot.content}
+                                                onChange={e => updateShotContent(realIndex, e.target.value)}
+                                                rows={2}
+                                                className="w-full bg-transparent text-xs text-white placeholder-slate-600 outline-none resize-none leading-relaxed"
+                                                placeholder="描述画面内容、动作和运镜..."
+                                            />
+                                        </div>
+                                    )
+                                })}
+                            </div>
+
+                            {/* Scene Context Override */}
+                            <div className="mt-4 pt-4 border-t border-cinematic-700/50">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                                        <Map size={10} /> 本组场景 (Scene Context)
+                                    </span>
+                                    {currentGroupSceneUrl ? (
+                                        <div className="flex items-center gap-2">
+                                            <img src={currentGroupSceneUrl} className="w-8 h-4 object-cover rounded border border-slate-600" />
+                                            <button 
+                                                onClick={() => setActiveSceneSelectorGroup(groupIndex)}
+                                                className="text-[10px] text-cinematic-gold hover:underline"
+                                            >
+                                                更换
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button 
+                                            onClick={() => setActiveSceneSelectorGroup(groupIndex)}
+                                            className="text-[10px] text-slate-500 hover:text-white flex items-center gap-1"
+                                        >
+                                            <PlusCircle size={10} /> 指定场景
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* RIGHT: VISUAL BOARD (2x2 Grid) */}
+                        <div className="lg:w-[500px] xl:w-[600px] p-6 bg-black/20 flex flex-col">
+                             <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-sm font-bold text-white flex items-center gap-2"><Layout size={16}/> 视觉呈现</h3>
+                                <button 
+                                    onClick={() => handleGenerateImage(groupIndex)}
+                                    disabled={isGeneratingMap[groupIndex]}
+                                    className="bg-cinematic-gold hover:bg-amber-400 text-black font-bold px-4 py-1.5 rounded text-xs flex items-center gap-2 shadow-lg disabled:opacity-50 transition-transform active:scale-95"
+                                >
+                                    {isGeneratingMap[groupIndex] ? <Loader2 className="animate-spin" size={14}/> : <Film size={14}/>}
+                                    生成分镜组图
+                                </button>
+                             </div>
+
+                             <div className={`relative bg-black rounded-lg border-2 overflow-hidden shadow-2xl transition-all group/board ${frameData ? 'border-cinematic-gold' : 'border-cinematic-700'}`}>
+                                  {/* Aspect Ratio Container */}
+                                  <div className={`w-full ${targetAspectRatio === "16:9" ? "aspect-video" : "aspect-[9/16]"}`}>
+                                      {frameData && frameData.imageUrl ? (
+                                          <img 
+                                            src={frameData.imageUrl} 
+                                            alt="Storyboard" 
+                                            className="w-full h-full object-cover" 
+                                          />
+                                      ) : isGeneratingMap[groupIndex] ? (
+                                          <div className="w-full h-full flex flex-col items-center justify-center gap-3">
+                                              <Loader2 className="animate-spin text-cinematic-gold" size={32} />
+                                              <span className="text-xs text-slate-400 animate-pulse">AI 正在绘制 4K 分镜...</span>
+                                          </div>
+                                      ) : (
+                                          <div className="w-full h-full flex flex-col items-center justify-center text-slate-700">
+                                              <Clapperboard size={48} className="mb-2 opacity-20" />
+                                              <span className="text-xs">等待生成</span>
+                                          </div>
+                                      )}
+                                  </div>
+
+                                  {/* Overlay Controls */}
+                                  {frameData && frameData.imageUrl && (
+                                      <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover/board:opacity-100 transition-opacity">
+                                           <button 
+                                              onClick={() => setViewingImage(frameData.imageUrl!)}
+                                              className="p-2 bg-black/60 hover:bg-white text-white hover:text-black rounded-full backdrop-blur"
+                                              title="全屏预览"
+                                           >
+                                               <ZoomIn size={16} />
+                                           </button>
+                                           <button 
+                                              onClick={() => {
+                                                  setActiveRefineGroupIndex(groupIndex);
+                                                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                                              }}
+                                              className="p-2 bg-black/60 hover:bg-cinematic-gold text-white hover:text-black rounded-full backdrop-blur"
+                                              title="局部精修 (Inpainting)"
+                                           >
+                                               <Settings2 size={16} />
+                                           </button>
+                                           <button 
+                                              onClick={() => setShowHistoryForGroup(groupIndex)}
+                                              className="p-2 bg-black/60 hover:bg-blue-500 text-white rounded-full backdrop-blur"
+                                              title="版本历史"
+                                           >
+                                               <History size={16} />
+                                           </button>
+                                      </div>
+                                  )}
+
+                                  {/* Compare Overlay */}
+                                  {comparingImage && compareTargetGroup === groupIndex && (
+                                      <div className="absolute bottom-2 left-2 right-2 bg-black/80 text-white text-xs p-2 rounded flex justify-between items-center animate-in slide-in-from-bottom-2">
+                                           <span>已更新。是否对比旧版？</span>
+                                           <div className="flex gap-2">
+                                               <button onClick={() => setViewingImage(comparingImage)} className="text-cinematic-gold hover:underline">查看旧版</button>
+                                               <button onClick={() => { setComparingImage(null); setCompareTargetGroup(null); }} className="text-slate-400 hover:text-white"><X size={14}/></button>
+                                           </div>
+                                      </div>
+                                  )}
+                             </div>
+                        </div>
+                    </div>
+
+                    {/* HISTORY DRAWER */}
+                    {showHistoryForGroup === groupIndex && frameData?.imageHistory && (
+                        <div className="bg-black/50 p-4 border-t border-cinematic-700 animate-in slide-in-from-top-2">
+                            <div className="flex justify-between items-center mb-2">
+                                <h4 className="text-xs font-bold text-slate-400 uppercase">版本历史</h4>
+                                <button onClick={() => setShowHistoryForGroup(null)}><X size={14} className="text-slate-500 hover:text-white" /></button>
+                            </div>
+                            <div className="flex gap-3 overflow-x-auto pb-2">
+                                {frameData.imageHistory.map((url, hIdx) => (
+                                    <div key={hIdx} className="flex-shrink-0 w-32 aspect-video bg-black rounded border border-slate-700 relative group/hist">
+                                        <img src={url} className="w-full h-full object-cover opacity-60 group-hover/hist:opacity-100 transition-opacity" />
+                                        <button 
+                                            onClick={() => handleSwitchVersion(url)}
+                                            className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover/hist:opacity-100 text-xs font-bold text-white transition-opacity"
+                                        >
+                                            恢复此版
+                                        </button>
+                                    </div>
+                                ))}
+                                {frameData.imageHistory.length === 0 && <span className="text-xs text-slate-600">无历史记录</span>}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        })}
+
+        {/* ADD GROUP BUTTON */}
+        <button 
+            onClick={handleAddGroup}
+            className="w-full py-4 border-2 border-dashed border-cinematic-700 hover:border-cinematic-gold rounded-xl text-slate-500 hover:text-cinematic-gold flex items-center justify-center gap-2 transition-all group"
+        >
+            <PlusCircle size={20} className="group-hover:scale-110 transition-transform"/>
+            <span className="font-bold">添加下一组分镜 (4 Shots)</span>
+        </button>
+
+      </div>
+
+      {/* REFINE TOOLBAR (Sticky Bottom or Modal) */}
+      {activeRefineGroupIndex !== null && (
+          <div className="fixed bottom-0 left-0 right-0 bg-cinematic-900 border-t border-cinematic-gold z-50 p-4 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] animate-in slide-in-from-bottom-full">
+               <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center gap-4">
+                    <div className="flex items-center gap-4">
+                        <div className="bg-cinematic-800 p-2 rounded text-white font-bold text-sm whitespace-nowrap">
+                            Group {activeRefineGroupIndex + 1}
+                        </div>
+                        <div className="h-8 w-px bg-slate-700"></div>
+                        <div className="flex items-center gap-2">
+                             <span className="text-xs text-slate-400 uppercase font-bold">修改第几格?</span>
+                             <div className="flex bg-cinematic-800 rounded border border-cinematic-700">
+                                 {[1,2,3,4].map(n => (
+                                     <button 
+                                        key={n}
+                                        onClick={() => setRefinePanelNum(n)}
+                                        className={`px-3 py-1.5 text-sm font-bold transition-colors ${refinePanelNum === n ? 'bg-cinematic-gold text-black' : 'text-slate-400 hover:text-white'}`}
+                                     >
+                                         {n}
+                                     </button>
+                                 ))}
+                             </div>
+                        </div>
+                    </div>
+                    
+                    <div className="flex-1 w-full relative">
+                        <input 
+                            value={refineInstruction}
+                            onChange={e => setRefineInstruction(e.target.value)}
+                            placeholder="描述修改内容 (例如: 2号镜头的角色表情改为惊讶，背景更暗一些)"
+                            className="w-full bg-cinematic-800 border border-cinematic-700 rounded-lg px-4 py-2 pr-24 text-white text-sm focus:border-cinematic-gold outline-none"
+                            onKeyDown={(e) => e.key === 'Enter' && handleRefinePanel()}
+                        />
+                        <button 
+                            onClick={handleRefinePanel}
+                            disabled={isRefining}
+                            className="absolute right-1 top-1 bottom-1 px-4 bg-cinematic-700 hover:bg-cinematic-600 text-white text-xs font-bold rounded flex items-center gap-2 disabled:opacity-50"
+                        >
+                            {isRefining ? <Loader2 className="animate-spin" size={14}/> : <Wand2 size={14}/>}
+                            执行
+                        </button>
+                    </div>
+
+                    <button onClick={() => setActiveRefineGroupIndex(null)} className="p-2 hover:bg-slate-800 rounded-full text-slate-500 hover:text-white">
+                        <X size={20} />
+                    </button>
+               </div>
+          </div>
+      )}
+
+      {/* FULL SCREEN VIEWER */}
+      {viewingImage && (
+            <div 
+                className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+                onClick={() => setViewingImage(null)}
+            >
+                <img 
+                    src={viewingImage} 
+                    className="max-w-full max-h-full object-contain shadow-2xl rounded-sm"
+                    alt="Full Screen"
+                    onClick={(e) => e.stopPropagation()} 
+                />
+                <button 
+                    className="absolute top-4 right-4 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white"
+                    onClick={() => setViewingImage(null)}
+                >
+                    <X size={24} />
+                </button>
+            </div>
+      )}
+
+      {/* IMAGE SELECTOR MODAL */}
+      {renderImageSelectorModal()}
+
+      {/* SCENE SELECTOR MODAL */}
+      {activeSceneSelectorGroup !== null && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-cinematic-900 border border-cinematic-gold rounded-xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[80vh]">
+                   <div className="p-4 border-b border-cinematic-700 flex justify-between items-center bg-cinematic-800/50 rounded-t-xl">
+                       <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                           <Map size={18} className="text-cinematic-gold"/>
+                           为 Group {activeSceneSelectorGroup + 1} 指定场景
+                       </h3>
+                       <button onClick={() => setActiveSceneSelectorGroup(null)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"><X size={20} /></button>
+                   </div>
+                   <div className="p-6 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-4">
+                       <button 
+                          onClick={() => {
+                              const newOverrides = { ...groupSceneOverrides };
+                              delete newOverrides[activeSceneSelectorGroup];
+                              setGroupSceneOverrides(newOverrides);
+                              setActiveSceneSelectorGroup(null);
+                          }}
+                          className="bg-cinematic-800 border-2 border-dashed border-slate-600 rounded-lg p-4 flex flex-col items-center justify-center gap-2 text-slate-500 hover:text-white hover:border-white"
+                       >
+                           <X size={24} />
+                           <span className="text-xs font-bold">清除指定 (使用全局)</span>
+                       </button>
+                       {availableScenes.map(scene => {
+                           const mainImg = scene.images.find(i => i.type === 'main');
+                           return (
+                               <div 
+                                  key={scene.id} 
+                                  onClick={() => {
+                                      if (mainImg) {
+                                          setGroupSceneOverrides(prev => ({ ...prev, [activeSceneSelectorGroup]: mainImg.url }));
+                                      }
+                                      setActiveSceneSelectorGroup(null);
+                                  }}
+                                  className="group cursor-pointer"
+                               >
+                                   <div className="aspect-video bg-black rounded-lg overflow-hidden border border-slate-700 group-hover:border-cinematic-gold">
+                                       {mainImg ? (
+                                           <img src={mainImg.url} className="w-full h-full object-cover" />
+                                       ) : (
+                                           <div className="w-full h-full flex items-center justify-center text-slate-600 text-xs">无图</div>
+                                       )}
+                                   </div>
+                                   <p className="text-xs text-center mt-2 text-slate-400 group-hover:text-white truncate">{scene.name}</p>
+                               </div>
+                           )
+                       })}
+                   </div>
+              </div>
+          </div>
+      )}
+
+    </div>
+  );
+};

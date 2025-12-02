@@ -441,7 +441,7 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
                                                 type="file" 
                                                 className="hidden" 
                                                 accept="image/*"
-                                                ref={el => uploadRefs.current[shot.id] = el}
+                                                ref={el => { uploadRefs.current[shot.id] = el; }}
                                                 onChange={(e) => handleManualUpload(e, shot.id)}
                                             />
                                         </div>
@@ -462,7 +462,7 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
                                                 type="file" 
                                                 className="hidden" 
                                                 accept="image/*"
-                                                ref={el => refUploadRefs.current[shot.id] = el}
+                                                ref={el => { refUploadRefs.current[shot.id] = el; }}
                                                 onChange={(e) => handleRefUpload(e, shot.id)}
                                             />
                                         </div>

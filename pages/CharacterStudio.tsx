@@ -828,7 +828,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
                     type="file" 
                     className="hidden" 
                     accept="image/*"
-                    ref={el => stageUploadRefs.current[shot.id] = el}
+                    ref={el => { stageUploadRefs.current[shot.id] = el; }}
                     onChange={(e) => handleStageImageUpload(e, shot.label)}
                  />
                  
