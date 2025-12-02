@@ -514,7 +514,15 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
     const currentImages = generatedImages.filter(img => img.angle !== shot.label);
 
     try {
-        const base64 = await generateCharacterImage(tempChar, shot.prompt, undefined, currentRefImage, undefined, refType);
+        const base64 = await generateCharacterImage(
+            tempChar, 
+            shot.prompt, 
+            undefined, 
+            currentRefImage, 
+            undefined, 
+            refType,
+            egg?.visualStyle // Pass Global Style
+        );
         const newImg: CharacterImage = {
             id: Date.now().toString(),
             url: base64,
@@ -561,7 +569,15 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
         };
         
         // 2. Generate
-        const base64 = await generateCharacterImage(tempChar, editPrompt, undefined, currentRefImage);
+        const base64 = await generateCharacterImage(
+            tempChar, 
+            editPrompt, 
+            undefined, 
+            currentRefImage,
+            undefined,
+            'identity',
+            egg?.visualStyle // Pass Global Style
+        );
         
         // 3. Update Image
         const updatedImages = generatedImages.map(img => 

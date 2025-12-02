@@ -1,8 +1,10 @@
 
+
 import React, { useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Universe, StoryEgg, Character, Storyboard, Scene } from '../types';
-import { ArrowLeft, UserPlus, Users, ArrowRight, Clapperboard, Film, Edit, Save, X, Image as ImageIcon, Map, Trash2, RotateCcw, Ban, GripVertical, FileText, Upload, CheckCircle } from 'lucide-react';
+import { ArrowLeft, UserPlus, Users, ArrowRight, Clapperboard, Film, Edit, Save, X, Image as ImageIcon, Map, Trash2, RotateCcw, Ban, GripVertical, FileText, Upload, CheckCircle, Palette, Check } from 'lucide-react';
+import { VISUAL_STYLE_PRESETS } from '../services/geminiService';
 
 interface StoryEggDetailProps {
   universes: Universe[];
@@ -53,6 +55,7 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editPremise, setEditPremise] = useState('');
+  const [editStyle, setEditStyle] = useState('');
 
   // Trash UI State
   const [showCharTrash, setShowCharTrash] = useState(false);
@@ -68,6 +71,7 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
     if (!egg) return;
     setEditTitle(egg.title);
     setEditPremise(egg.premise);
+    setEditStyle(egg.visualStyle || VISUAL_STYLE_PRESETS[0].id);
     setIsEditing(true);
   };
 
@@ -76,7 +80,8 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
     const updatedEgg: StoryEgg = {
       ...egg,
       title: editTitle,
-      premise: editPremise
+      premise: editPremise,
+      visualStyle: editStyle
     };
     await onUpdateEgg(updatedEgg);
     setIsEditing(false);
@@ -205,6 +210,8 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
 
   if (!universe || !egg) return <div className="p-8 text-slate-400">故事档案未找到</div>;
 
+  const currentStyleLabel = VISUAL_STYLE_PRESETS.find(s => s.id === egg.visualStyle)?.label || '默认风格';
+
   return (
     <div className="p-8 max-w-7xl mx-auto pb-32">
       <div className="flex items-center gap-2 text-sm text-slate-500 mb-6">
@@ -248,6 +255,15 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
               <h1 className="text-3xl font-bold text-white mb-2">{egg.title}</h1>
               <p className="text-slate-300 text-lg mb-4">{egg.premise}</p>
               
+              <div className="flex flex-wrap gap-4 mt-2">
+                  <div className="text-sm text-slate-500">
+                      所属宇宙：{universe.name} | 类型：{universe.type}
+                  </div>
+                  <div className="text-sm text-cinematic-gold flex items-center gap-1 bg-cinematic-900/50 px-2 py-0.5 rounded border border-cinematic-gold/20">
+                      <Palette size={14}/> 美术风格：{currentStyleLabel}
+                  </div>
+              </div>
+
               {/* SCRIPT FILE INDICATOR */}
               <div className="flex items-center gap-4 mt-6">
                   {egg.fullScript ? (
@@ -289,20 +305,21 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                     onChange={handleScriptUpload}
                   />
               </div>
-
-              <p className="text-sm text-slate-500 mt-4">所属宇宙：{universe.name} | 类型：{universe.type}</p>
             </div>
           </div>
         ) : (
-          <div className="space-y-4 max-w-2xl">
-            <div>
-               <label className="block text-xs text-slate-500 mb-1 uppercase">故事标题</label>
-               <input 
-                  value={editTitle}
-                  onChange={e => setEditTitle(e.target.value)}
-                  className="w-full bg-cinematic-900 border border-cinematic-700 rounded px-3 py-2 text-white focus:border-cinematic-accent outline-none"
-               />
+          <div className="space-y-4 max-w-3xl">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                   <label className="block text-xs text-slate-500 mb-1 uppercase">故事标题</label>
+                   <input 
+                      value={editTitle}
+                      onChange={e => setEditTitle(e.target.value)}
+                      className="w-full bg-cinematic-900 border border-cinematic-700 rounded px-3 py-2 text-white focus:border-cinematic-accent outline-none"
+                   />
+                </div>
             </div>
+            
             <div>
                <label className="block text-xs text-slate-500 mb-1 uppercase">故事梗概</label>
                <textarea 
@@ -311,6 +328,31 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
                   rows={3}
                   className="w-full bg-cinematic-900 border border-cinematic-700 rounded px-3 py-2 text-white focus:border-cinematic-accent outline-none resize-none"
                />
+            </div>
+
+            {/* Edit Style */}
+            <div className="bg-cinematic-900/50 p-3 rounded-lg border border-cinematic-700">
+                 <label className="block text-xs text-slate-500 mb-2 uppercase flex items-center gap-2">
+                     <Palette size={14} className="text-cinematic-gold"/> 调整美术风格
+                 </label>
+                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
+                     {VISUAL_STYLE_PRESETS.map(style => (
+                         <div 
+                            key={style.id}
+                            onClick={() => setEditStyle(style.id)}
+                            className={`flex flex-col items-center gap-2 p-2 rounded cursor-pointer border transition-all ${
+                                editStyle === style.id 
+                                ? 'bg-cinematic-gold/10 border-cinematic-gold ring-1 ring-cinematic-gold/50' 
+                                : 'bg-cinematic-800 border-transparent hover:border-cinematic-700 hover:bg-cinematic-700'
+                            }`}
+                         >
+                             <img src={style.thumbnail} alt={style.label} className="w-[65px] h-[65px] rounded object-cover flex-shrink-0 bg-slate-700" />
+                             <div className="min-w-0 text-center">
+                                 <div className={`text-[10px] font-bold truncate ${editStyle === style.id ? 'text-cinematic-gold' : 'text-slate-300'}`}>{style.label}</div>
+                             </div>
+                         </div>
+                     ))}
+                 </div>
             </div>
           </div>
         )}

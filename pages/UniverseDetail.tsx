@@ -3,8 +3,8 @@
 import React, { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Universe, StoryEgg, UniverseType, Storyboard } from '../types';
-import { ArrowLeft, Egg, Plus, ArrowRight, Calendar, Edit, Save, X, Sparkles, Loader2, Tag, ChevronDown, ChevronUp } from 'lucide-react';
-import { expandUniverseSetting, expandUniverseRules } from '../services/geminiService';
+import { ArrowLeft, Egg, Plus, ArrowRight, Calendar, Edit, Save, X, Sparkles, Loader2, Tag, ChevronDown, ChevronUp, Palette, CheckCircle } from 'lucide-react';
+import { expandUniverseSetting, expandUniverseRules, VISUAL_STYLE_PRESETS } from '../services/geminiService';
 
 interface UniverseDetailProps {
   universes: Universe[];
@@ -48,6 +48,7 @@ export const UniverseDetail: React.FC<UniverseDetailProps> = ({ universes, story
   const [isCreating, setIsCreating] = useState(false);
   const [newEggTitle, setNewEggTitle] = useState('');
   const [newEggPremise, setNewEggPremise] = useState('');
+  const [newEggStyle, setNewEggStyle] = useState<string>(VISUAL_STYLE_PRESETS[0].id);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
@@ -73,6 +74,7 @@ export const UniverseDetail: React.FC<UniverseDetailProps> = ({ universes, story
       universeId: universeId,
       title: newEggTitle,
       premise: newEggPremise,
+      visualStyle: newEggStyle,
       createdAt: new Date()
     };
 
@@ -80,6 +82,7 @@ export const UniverseDetail: React.FC<UniverseDetailProps> = ({ universes, story
     setIsCreating(false);
     setNewEggTitle('');
     setNewEggPremise('');
+    setNewEggStyle(VISUAL_STYLE_PRESETS[0].id);
   };
 
   const startEditing = () => {
@@ -165,8 +168,6 @@ export const UniverseDetail: React.FC<UniverseDetailProps> = ({ universes, story
       }
       return null;
   };
-
-  if (!universe) return <div className="p-8 text-slate-400">宇宙未找到</div>;
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto pb-24">
@@ -353,32 +354,66 @@ export const UniverseDetail: React.FC<UniverseDetailProps> = ({ universes, story
       </div>
 
       {isCreating && (
-        <div className="mb-8 bg-cinematic-800 p-6 rounded-xl border border-cinematic-700 animate-in slide-in-from-top-4 duration-300">
+        <div className="mb-8 bg-cinematic-800 p-6 rounded-xl border border-cinematic-700 animate-in slide-in-from-top-4 duration-300 shadow-2xl">
           <h3 className="text-lg font-semibold text-white mb-4">设定新故事雏形</h3>
-          <form onSubmit={handleCreateEgg} className="space-y-4">
-            <div>
-              <label className="block text-sm text-slate-400 mb-1">故事标题</label>
-              <input 
-                type="text" 
-                required
-                value={newEggTitle}
-                onChange={e => setNewEggTitle(e.target.value)}
-                className="w-full bg-cinematic-900 border border-cinematic-700 rounded p-3 text-white focus:border-cinematic-accent outline-none"
-                placeholder="例如：暗夜行动"
-              />
+          <form onSubmit={handleCreateEgg} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm text-slate-400 mb-1">故事标题</label>
+                        <input 
+                            type="text" 
+                            required
+                            value={newEggTitle}
+                            onChange={e => setNewEggTitle(e.target.value)}
+                            className="w-full bg-cinematic-900 border border-cinematic-700 rounded p-3 text-white focus:border-cinematic-accent outline-none"
+                            placeholder="例如：暗夜行动"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm text-slate-400 mb-1">故事梗概</label>
+                        <textarea 
+                            required
+                            rows={6}
+                            value={newEggPremise}
+                            onChange={e => setNewEggPremise(e.target.value)}
+                            className="w-full bg-cinematic-900 border border-cinematic-700 rounded p-3 text-white focus:border-cinematic-accent outline-none resize-none"
+                            placeholder="一句话描述这个故事的核心冲突..."
+                        />
+                    </div>
+                </div>
+
+                {/* Visual Style Selector */}
+                <div className="bg-cinematic-900/50 p-4 rounded-xl border border-cinematic-700">
+                     <label className="block text-sm text-slate-400 mb-3 flex items-center gap-2">
+                        <Palette size={16} className="text-cinematic-gold"/>
+                        设定美术基调 (Visual Art Direction)
+                     </label>
+                     <p className="text-xs text-slate-500 mb-4">此设定将决定该故事下所有角色、场景和分镜的生成画风。</p>
+                     
+                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
+                         {VISUAL_STYLE_PRESETS.map(style => (
+                             <div 
+                                key={style.id}
+                                onClick={() => setNewEggStyle(style.id)}
+                                className={`flex flex-col items-center gap-2 p-2 rounded-lg cursor-pointer border transition-all ${
+                                    newEggStyle === style.id 
+                                    ? 'bg-cinematic-gold/10 border-cinematic-gold ring-1 ring-cinematic-gold/50' 
+                                    : 'bg-cinematic-800 border-transparent hover:border-cinematic-700 hover:bg-cinematic-700'
+                                }`}
+                             >
+                                 <img src={style.thumbnail} alt={style.label} className="w-[65px] h-[65px] rounded object-cover flex-shrink-0 bg-slate-700" />
+                                 <div className="min-w-0 text-center">
+                                     <div className={`text-xs font-bold truncate ${newEggStyle === style.id ? 'text-cinematic-gold' : 'text-slate-300'}`}>{style.label}</div>
+                                 </div>
+                                 {newEggStyle === style.id && <CheckCircle size={14} className="text-cinematic-gold flex-shrink-0" />}
+                             </div>
+                         ))}
+                     </div>
+                </div>
             </div>
-            <div>
-              <label className="block text-sm text-slate-400 mb-1">故事梗概</label>
-              <textarea 
-                required
-                rows={3}
-                value={newEggPremise}
-                onChange={e => setNewEggPremise(e.target.value)}
-                className="w-full bg-cinematic-900 border border-cinematic-700 rounded p-3 text-white focus:border-cinematic-accent outline-none resize-none"
-                placeholder="一句话描述这个故事的核心冲突..."
-              />
-            </div>
-            <div className="flex justify-end gap-3">
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-cinematic-700">
               <button 
                 type="button" 
                 onClick={() => setIsCreating(false)}
@@ -407,6 +442,9 @@ export const UniverseDetail: React.FC<UniverseDetailProps> = ({ universes, story
 
         {myEggs.map(egg => {
             const coverImage = getEggCoverImage(egg.id);
+            // Resolve style label for display
+            const styleLabel = VISUAL_STYLE_PRESETS.find(s => s.id === egg.visualStyle)?.label || '默认风格';
+
             return (
               <Link 
                 key={egg.id} 
@@ -426,9 +464,14 @@ export const UniverseDetail: React.FC<UniverseDetailProps> = ({ universes, story
                      <div className="w-10 h-10 rounded-full bg-cinematic-900/80 backdrop-blur flex items-center justify-center text-cinematic-gold group-hover:scale-110 transition-transform">
                        <Egg size={20} />
                      </div>
-                     <span className="text-[10px] md:text-xs text-slate-400 flex items-center gap-1 bg-black/50 px-2 py-1 rounded">
-                       <Calendar size={12} /> {new Date(egg.createdAt).toLocaleDateString()}
-                     </span>
+                     <div className="flex flex-col items-end gap-1">
+                        <span className="text-[10px] md:text-xs text-slate-400 flex items-center gap-1 bg-black/50 px-2 py-1 rounded">
+                            <Calendar size={12} /> {new Date(egg.createdAt).toLocaleDateString()}
+                        </span>
+                        <span className="text-[10px] text-cinematic-gold bg-black/50 px-2 py-0.5 rounded border border-cinematic-gold/20">
+                           {styleLabel}
+                        </span>
+                     </div>
                    </div>
                    <h3 className="text-xl font-bold text-white mb-2 group-hover:text-cinematic-gold transition-colors">{egg.title}</h3>
                    <p className="text-slate-300 text-sm line-clamp-3 mb-6 h-10">{egg.premise}</p>

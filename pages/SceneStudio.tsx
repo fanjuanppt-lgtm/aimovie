@@ -112,7 +112,13 @@ export const SceneStudio: React.FC<SceneStudioProps> = ({ universes, storyEggs, 
             ? shot.id 
             : 'custom'; 
 
-        const url = await generateSceneImage(name, combinedDesc, effectiveViewType, effectiveRefImage);
+        const url = await generateSceneImage(
+            name, 
+            combinedDesc, 
+            effectiveViewType, 
+            effectiveRefImage,
+            egg?.visualStyle // Pass Global Style
+        );
         
         const newImg: SceneImage = { 
             id: Date.now().toString(),

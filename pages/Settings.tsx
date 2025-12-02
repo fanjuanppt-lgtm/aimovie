@@ -5,7 +5,7 @@ import {
     Settings as SettingsIcon, Save, Key, CheckCircle, AlertCircle, 
     ExternalLink, Zap, Database, Download, Upload, HardDrive, 
     ShieldAlert, Activity, Terminal, HelpCircle, Link as LinkIcon, MessageSquare, Server,
-    Video, Cpu, Archive, FileText
+    Video, Cpu, Archive, FileText, RefreshCw, Eye
 } from 'lucide-react';
 import { diagnoseNetwork, DiagnosisResult } from '../services/geminiService';
 import { dbService } from '../services/db';
@@ -37,6 +37,9 @@ export const Settings: React.FC = () => {
   const [isDiagnosingImage, setIsDiagnosingImage] = useState(false);
   const [diagnosticLogs, setDiagnosticLogs] = useState<DiagnosisResult[]>([]);
   const [overallStatus, setOverallStatus] = useState<'idle' | 'success' | 'warning' | 'error'>('idle');
+  
+  // -- Visual Diagnostic Detail State --
+  const [visualTestResult, setVisualTestResult] = useState<DiagnosisResult[] | null>(null);
 
   // -- DB Management --
   const [dbStats, setDbStats] = useState<any>(null);
@@ -162,7 +165,10 @@ export const Settings: React.FC = () => {
 
   const runDiagnostics = async (target: 'text' | 'image') => {
       if (target === 'text') setIsDiagnosingText(true);
-      if (target === 'image') setIsDiagnosingImage(true);
+      if (target === 'image') {
+          setIsDiagnosingImage(true);
+          setVisualTestResult(null); // Clear previous detailed result
+      }
       
       setDiagnosticLogs([]); // Clear previous logs
       setOverallStatus('idle');
@@ -181,6 +187,10 @@ export const Settings: React.FC = () => {
               target
           );
           setDiagnosticLogs(results);
+          
+          if (target === 'image') {
+              setVisualTestResult(results);
+          }
           
           const hasError = results.some(r => r.status === 'error');
           const hasWarning = results.some(r => r.status === 'warning');
@@ -459,17 +469,28 @@ export const Settings: React.FC = () => {
                                 </p>
 
                                 {isProjectLinked ? (
-                                    <div className="flex flex-col gap-2">
+                                    <div className="flex flex-col gap-3">
                                         <div className="bg-green-900/20 border border-green-500/30 text-green-400 px-4 py-3 rounded-lg flex items-center gap-2 font-bold text-sm">
                                             <CheckCircle size={18} />
                                             已成功连接 Google Cloud 项目
                                         </div>
-                                        <button 
-                                            onClick={handleLinkProject} 
-                                            className="text-xs text-slate-500 hover:text-white underline text-right"
-                                        >
-                                            切换/重新选择项目
-                                        </button>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={handleLinkProject} 
+                                                className="flex-1 py-2 bg-cinematic-800 hover:bg-cinematic-700 border border-cinematic-600 text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors"
+                                            >
+                                                <RefreshCw size={14} /> 强制刷新连接 (Force Refresh)
+                                            </button>
+                                            <button 
+                                                onClick={handleLinkProject} 
+                                                className="px-3 py-2 text-xs text-slate-500 hover:text-white underline"
+                                            >
+                                                切换项目
+                                            </button>
+                                        </div>
+                                        <p className="text-[10px] text-slate-500">
+                                            * 如果遇到 "Requested entity was not found" 或 "403" 错误，请点击【强制刷新连接】。
+                                        </p>
                                     </div>
                                 ) : (
                                     <button 
@@ -580,6 +601,45 @@ export const Settings: React.FC = () => {
                        </div>
                    )}
                </div>
+
+               {/* NEW VISUAL TEST RESULT BOX */}
+               {visualTestResult && (
+                   <div className="bg-cinematic-800 rounded-xl border border-cinematic-700 p-6 shadow-xl animate-in slide-in-from-bottom-2">
+                       <div className="flex items-center gap-2 mb-4 border-b border-cinematic-700 pb-2">
+                           <Eye className="text-cinematic-gold" size={20} />
+                           <h2 className="text-lg font-bold text-white">视觉生成能力深度检测</h2>
+                       </div>
+                       
+                       <div className="space-y-3">
+                           {visualTestResult.some(r => r.step === 'Visual Gen' && r.status === 'success') ? (
+                               <div className="p-4 bg-green-900/20 border border-green-500/30 rounded-lg">
+                                   <div className="flex items-center gap-2 text-green-400 font-bold mb-2">
+                                       <CheckCircle size={18} /> 
+                                       视觉引擎工作正常 (Visual Engine Active)
+                                   </div>
+                                   <p className="text-xs text-slate-400">
+                                       已成功通过 {imageModel} 生成测试图像。您的 Key 或项目绑定已生效，具备绘图权限。
+                                   </p>
+                               </div>
+                           ) : visualTestResult.some(r => r.step === 'Visual Gen' && r.status === 'error') ? (
+                               <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-lg">
+                                   <div className="flex items-center gap-2 text-red-400 font-bold mb-2">
+                                       <AlertCircle size={18} /> 
+                                       视觉引擎拒绝服务 (Generation Failed)
+                                   </div>
+                                   <p className="text-xs text-slate-400">
+                                       {visualTestResult.find(r => r.step === 'Visual Gen')?.message || "未知错误"}
+                                   </p>
+                                   <div className="mt-2 text-[10px] text-cinematic-gold bg-black/30 p-2 rounded">
+                                       <strong>建议:</strong> 请尝试点击上方的 "强制刷新连接" 按钮，或者在左侧将视觉模型切换为 "Flash (标准画质)"。
+                                   </div>
+                               </div>
+                           ) : (
+                               <div className="text-center text-slate-500 text-xs">检测中...</div>
+                           )}
+                       </div>
+                   </div>
+               )}
 
                {/* DATA MANAGEMENT CARD */}
                <div className="bg-cinematic-800 rounded-xl border border-cinematic-700 p-6 flex flex-col h-full">

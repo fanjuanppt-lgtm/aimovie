@@ -36,6 +36,7 @@ export interface StoryEgg {
   title: string;
   premise: string; 
   fullScript?: string; // New: Full TXT script content
+  visualStyle?: string; // New: Global Art Direction (e.g., 'anime-shinkai', 'cinematic')
   createdAt: Date;
 }
 

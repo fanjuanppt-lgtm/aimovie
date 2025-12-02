@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Universe, StoryEgg, Character, Storyboard, Scene, StoryboardFrame, ScriptShot } from '../types';
 import { generateDetailedScript, generateStoryboardFrameImage, refineStoryboardPanel, polishShotText, ShotReference } from '../services/geminiService';
-import { ArrowLeft, Clapperboard, Loader2, Save, Sparkles, Map, ZoomIn, X, Users, Wand2, PenTool, FileText, Settings2, Grid, Lock, Unlock, History, GitCompare, ArrowRightLeft, PlusCircle, Film, User, Check, Cloud, ChevronDown, ChevronUp, Eye, Layout, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Loader2, Save, Sparkles, Map, ZoomIn, X, Users, Wand2, PenTool, FileText, Settings2, Grid, Lock, Unlock, History, GitCompare, ArrowRightLeft, PlusCircle, Film, User, Check, Cloud, ChevronDown, ChevronUp, Eye, Layout, CheckCircle, Smartphone, Monitor } from 'lucide-react';
 
 interface StoryboardCreatorProps {
   universes: Universe[];
@@ -43,6 +43,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
   const [sceneTitle, setSceneTitle] = useState('');
   const [roughPlot, setRoughPlot] = useState(''); // Serves as "Scene Summary"
   const [selectedSceneId, setSelectedSceneId] = useState<string>('');
+  const [targetAspectRatio, setTargetAspectRatio] = useState<"16:9" | "9:16">("16:9");
   
   // Cast Selection
   const [participatingCharIds, setParticipatingCharIds] = useState<string[]>([]);
@@ -486,6 +487,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
 
           console.log(`Generating Group ${groupIndex} (Shots ${startIndex+1}-${startIndex+4})`);
           
+          // Pass targetAspectRatio to the service
           const imageUrl = await generateStoryboardFrameImage(
               context,
               formattedScript,
@@ -493,7 +495,9 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
               sceneImageUrl,
               charPayload,
               previousGroupImageUrl,
-              shotReferences 
+              shotReferences,
+              targetAspectRatio,
+              egg?.visualStyle // Pass Global Style
           );
           
           const currentFrames = [...framesRef.current];
@@ -757,7 +761,7 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
         
         {/* GLOBAL CONTEXT & SETTINGS */}
         <div className="bg-cinematic-800 p-6 rounded-xl border border-cinematic-700 shadow-xl">
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-4">
                 <div>
                     <label className="block text-xs font-bold text-slate-400 uppercase mb-2">场景标题</label>
                     <input 
@@ -780,452 +784,20 @@ export const StoryboardCreator: React.FC<StoryboardCreatorProps> = ({ universes,
                         {availableScenes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                 </div>
-            </div>
-             <div className="flex flex-col md:flex-row gap-6">
-                 <div className="flex-1 p-4 bg-cinematic-900/50 rounded-lg border border-cinematic-700">
-                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">场景概要</label>
-                    <textarea 
-                        rows={3}
-                        value={roughPlot}
-                        onChange={e => setRoughPlot(e.target.value)}
-                        className="w-full bg-cinematic-800 border border-cinematic-700 rounded p-2 text-white focus:border-cinematic-accent outline-none resize-none text-sm"
-                        placeholder="例如：主角在雨中奔跑，被反派追击，最终躲进废弃仓库..."
-                    />
-                </div>
                 
-                {/* CAST SELECTION */}
-                <div className="w-full md:w-1/3 p-4 bg-cinematic-900/50 rounded-lg border border-cinematic-700 overflow-y-auto max-h-[120px]">
-                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2 flex justify-between">
-                        <span>参演人物 (Cast)</span>
-                        <span className="text-cinematic-gold">{participatingCharIds.length} / {availableCharacters.length}</span>
+                <div>
+                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
+                        画幅选择
                     </label>
-                    <div className="flex flex-wrap gap-2">
-                        {availableCharacters.map(c => {
-                            const isSelected = participatingCharIds.includes(c.id);
-                            return (
-                                <button 
-                                    key={c.id}
-                                    onClick={() => toggleParticipatingChar(c.id)}
-                                    className={`text-xs px-2 py-1 rounded-full border transition-all ${
-                                        isSelected 
-                                        ? 'bg-cinematic-gold/20 text-cinematic-gold border-cinematic-gold' 
-                                        : 'bg-cinematic-800 text-slate-500 border-cinematic-700 hover:border-slate-500'
-                                    }`}
-                                >
-                                    {c.roots.name}
-                                </button>
-                            );
-                        })}
-                        {availableCharacters.length === 0 && <span className="text-xs text-slate-600">暂无可用角色</span>}
-                    </div>
-                </div>
-             </div>
-        </div>
-
-        {/* STORYBOARD GROUPS RENDER LOOP */}
-        {Array.from({ length: totalGroups }).map((_, groupIndex) => {
-            const startShotIndex = groupIndex * SHOTS_PER_GROUP;
-            const groupShots = scriptShots.slice(startShotIndex, startShotIndex + SHOTS_PER_GROUP);
-            const generatedFrame = generatedFrames[groupIndex];
-            const isGroupGenerating = isGeneratingMap[groupIndex];
-            const hasHistory = generatedFrame?.imageHistory && generatedFrame.imageHistory.length > 0;
-            
-            // Current Scene Override for this group
-            const currentOverrideUrl = groupSceneOverrides[groupIndex];
-            const isOverrideActive = !!currentOverrideUrl;
-
-            return (
-                <div key={groupIndex} className="bg-cinematic-800/50 p-6 rounded-xl border border-cinematic-700 shadow-xl relative animate-in fade-in slide-in-from-bottom-4 transition-all duration-300">
-                     {/* Group Label & Reorder Controls */}
-                     <div className="absolute top-0 left-0 flex items-center">
-                        <div className="bg-cinematic-700 px-3 py-1 rounded-br-lg rounded-tl-lg text-xs font-bold text-white border-r border-b border-cinematic-600">
-                             Group {groupIndex + 1} (Shots {startShotIndex + 1} - {startShotIndex + groupShots.length})
-                        </div>
-                        <div className="flex ml-2 gap-1 opacity-50 hover:opacity-100 transition-opacity">
-                            {groupIndex > 0 && (
-                                <button onClick={() => handleMoveGroup(groupIndex, 'up')} className="p-1 bg-cinematic-900 border border-cinematic-700 rounded text-slate-400 hover:text-white" title="上移">
-                                    <ChevronUp size={14} />
-                                </button>
-                            )}
-                            {groupIndex < totalGroups - 1 && (
-                                <button onClick={() => handleMoveGroup(groupIndex, 'down')} className="p-1 bg-cinematic-900 border border-cinematic-700 rounded text-slate-400 hover:text-white" title="下移">
-                                    <ChevronDown size={14} />
-                                </button>
-                            )}
-                        </div>
-                     </div>
-
-                     <div className="flex flex-col xl:flex-row gap-6 mt-6">
-                         
-                         {/* LEFT: SCRIPTING AREA (4 SHOTS) */}
-                         <div className="flex-1 space-y-4">
-                             <div className="flex justify-between items-center mb-2">
-                                 <h3 className="text-sm font-bold text-white flex items-center gap-2"><FileText size={16} className="text-cinematic-gold"/> 剧本描述</h3>
-                                 <div className="flex items-center gap-2">
-                                     {/* Scene Sub-selector */}
-                                     {activeSceneObj && activeSceneObj.images.length > 0 && (
-                                        <div className="relative">
-                                            <button 
-                                                onClick={() => setActiveSceneSelectorGroup(activeSceneSelectorGroup === groupIndex ? null : groupIndex)}
-                                                className={`text-xs px-2 py-1 rounded border flex items-center gap-1 transition-colors ${
-                                                    isOverrideActive 
-                                                    ? 'bg-cinematic-gold/20 text-cinematic-gold border-cinematic-gold' 
-                                                    : 'bg-cinematic-900 text-slate-400 border-cinematic-700 hover:text-white'
-                                                }`}
-                                            >
-                                                <Layout size={12}/> 
-                                                {isOverrideActive ? '已选特定子场景' : '场景视角选择'}
-                                            </button>
-                                            
-                                            {/* Toggle-based Dropdown for Scene Images */}
-                                            {activeSceneSelectorGroup === groupIndex && (
-                                                <>
-                                                    <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setActiveSceneSelectorGroup(null)} />
-                                                    <div className="absolute right-0 top-full mt-2 w-[600px] bg-cinematic-900 border border-cinematic-700 rounded-xl shadow-2xl p-4 z-50 animate-in fade-in slide-in-from-top-2 border-r border-b border-l border-t-0">
-                                                        <div className="flex justify-between items-center mb-4 border-b border-cinematic-700 pb-2">
-                                                            <span className="text-sm text-slate-200 font-bold uppercase flex items-center gap-2">
-                                                                <Layout size={16} className="text-cinematic-gold"/> 
-                                                                选择本组参考视角 (Select View Override)
-                                                            </span>
-                                                            <button onClick={() => setActiveSceneSelectorGroup(null)} className="text-slate-500 hover:text-white bg-cinematic-800 p-1.5 rounded-full transition-colors"><X size={16}/></button>
-                                                        </div>
-                                                        <div className="grid grid-cols-2 gap-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-1">
-                                                            {/* Default Option */}
-                                                            <div 
-                                                                onClick={() => {
-                                                                    const newO = {...groupSceneOverrides};
-                                                                    delete newO[groupIndex];
-                                                                    setGroupSceneOverrides(newO);
-                                                                    setActiveSceneSelectorGroup(null);
-                                                                }}
-                                                                className={`aspect-video rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer text-sm transition-all h-full min-h-[140px] ${!isOverrideActive ? 'border-cinematic-gold bg-cinematic-gold/10 text-cinematic-gold' : 'border-cinematic-700 text-slate-500 hover:text-white hover:border-slate-500 hover:bg-cinematic-800'}`}
-                                                            >
-                                                                <span className="font-bold mb-1">使用默认场景 (Default)</span>
-                                                                <span className="text-xs opacity-70">不强制指定视角</span>
-                                                                {!isOverrideActive && <CheckCircle size={24} className="mt-2"/>}
-                                                            </div>
-                                                            
-                                                            {/* Images */}
-                                                            {activeSceneObj.images.map(img => (
-                                                                <div 
-                                                                    key={img.id}
-                                                                    onClick={() => {
-                                                                        setGroupSceneOverrides({ ...groupSceneOverrides, [groupIndex]: img.url });
-                                                                        setActiveSceneSelectorGroup(null);
-                                                                    }}
-                                                                    className={`relative aspect-video rounded-xl overflow-hidden cursor-pointer border-2 transition-all group shadow-lg ${currentOverrideUrl === img.url ? 'border-cinematic-gold ring-2 ring-cinematic-gold/30' : 'border-transparent hover:border-cinematic-accent'}`}
-                                                                >
-                                                                    <img src={img.url} className="w-full h-full object-cover" />
-                                                                    
-                                                                    {/* Hover Overlay */}
-                                                                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                                                         <span className="bg-black/80 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur border border-white/20 font-bold">点击选择</span>
-                                                                    </div>
-                                                                    
-                                                                    {/* Label */}
-                                                                    {img.type && (
-                                                                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-3 pt-6 flex justify-between items-end">
-                                                                            <span className="text-xs text-white font-bold font-mono truncate uppercase shadow-black drop-shadow-md">{img.type}</span>
-                                                                        </div>
-                                                                    )}
-
-                                                                    {/* Selected Indicator */}
-                                                                    {currentOverrideUrl === img.url && (
-                                                                         <div className="absolute top-2 right-2 bg-cinematic-gold text-black rounded-full p-1.5 shadow-xl border border-white/20">
-                                                                            <Check size={16} strokeWidth={4} />
-                                                                         </div>
-                                                                    )}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                </>
-                                            )}
-                                        </div>
-                                     )}
-
-                                     <button 
-                                        onClick={() => handleAIScriptGen(groupIndex)}
-                                        disabled={isBrainstorming || !sceneTitle}
-                                        className="text-xs px-3 py-1 bg-cinematic-700 hover:bg-cinematic-600 text-white rounded border border-cinematic-600 flex items-center gap-1 disabled:opacity-50"
-                                    >
-                                        {isBrainstorming ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12} />}
-                                        AI 编写本组剧本
-                                    </button>
-                                 </div>
-                             </div>
-                             
-                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                 {groupShots.map((shot, i) => (
-                                     <div key={shot.id} className="relative group bg-cinematic-900/50 border border-cinematic-700 rounded-lg p-3 hover:border-cinematic-500 transition-colors flex flex-col gap-2">
-                                         <div className="flex justify-between items-center">
-                                             <span className="text-xs font-bold text-slate-400">镜头 #{shot.id}</span>
-                                             <div className="flex gap-1">
-                                                 <button onClick={() => handlePolishShot(startShotIndex + i)} disabled={shot.isLocked || shot.isPolishing} className="p-1 hover:text-cinematic-gold disabled:opacity-30"><Wand2 size={10}/></button>
-                                                 <button onClick={() => toggleShotLock(startShotIndex + i)} className={`p-1 ${shot.isLocked ? 'text-cinematic-gold' : 'text-slate-600'}`}>{shot.isLocked ? <Lock size={10}/> : <Unlock size={10}/>}</button>
-                                             </div>
-                                         </div>
-                                         
-                                         <select 
-                                             value={shot.theme}
-                                             onChange={(e) => updateShotTheme(startShotIndex + i, e.target.value)}
-                                             className="w-full bg-cinematic-800 text-xs text-cinematic-gold font-bold border border-cinematic-700 rounded px-2 py-1 focus:border-cinematic-gold outline-none"
-                                             disabled={shot.isLocked}
-                                         >
-                                             <option value="">-- 选择景别 / Shot Scale --</option>
-                                             {SHOT_SCALES.map((scale, idx) => (
-                                                 <option key={idx} value={scale}>{scale}</option>
-                                             ))}
-                                         </select>
-
-                                         <textarea 
-                                             value={shot.content}
-                                             onChange={(e) => updateShotContent(startShotIndex + i, e.target.value)}
-                                             rows={3}
-                                             className="w-full bg-transparent text-xs text-white outline-none resize-none placeholder-slate-600"
-                                             placeholder="AI 自动生成视觉描述，或手动填写..."
-                                             disabled={shot.isLocked}
-                                         />
-
-                                         <div className="border-t border-cinematic-800 pt-2">
-                                             <label className="text-[10px] text-slate-500 font-bold block mb-1">参演角色 (点击选中/点击头像换图):</label>
-                                             <div className="flex flex-wrap gap-2">
-                                                 {activeCast.length === 0 && <span className="text-[10px] text-slate-600">未选择参演角色</span>}
-                                                 {activeCast.map(c => {
-                                                     const isSelected = shot.characterIds?.includes(c.id);
-                                                     const selectedImgId = shot.selectedImageIds?.[c.id];
-                                                     const selectedImg = c.images.find(img => img.id === selectedImgId) || c.images.find(img => img.angle.startsWith('01')) || c.images[0];
-                                                     
-                                                     return (
-                                                         <div key={c.id} className="flex items-center gap-1.5 bg-cinematic-800 rounded-full pr-1 pl-1 py-0.5 border border-cinematic-700">
-                                                            <button
-                                                                onClick={() => toggleCharForShot(startShotIndex + i, c.id)}
-                                                                className={`text-[10px] px-2 py-0.5 rounded-full transition-colors flex items-center gap-1 ${
-                                                                    isSelected 
-                                                                    ? 'bg-cinematic-gold text-black font-bold' 
-                                                                    : 'bg-transparent text-slate-400 hover:text-white'
-                                                                }`}
-                                                            >
-                                                                {c.roots.name}
-                                                            </button>
-                                                            {isSelected && selectedImg && (
-                                                                <button
-                                                                    type="button" 
-                                                                    onClick={() => setActiveImageSelector({ shotIndex: startShotIndex + i, charId: c.id })}
-                                                                    className="w-5 h-5 rounded-full overflow-hidden border border-slate-500 hover:border-cinematic-gold hover:scale-110 transition-all cursor-pointer"
-                                                                    title="点击更换参考图"
-                                                                >
-                                                                    <img src={selectedImg.url} className="w-full h-full object-cover" />
-                                                                </button>
-                                                            )}
-                                                         </div>
-                                                     );
-                                                 })}
-                                             </div>
-                                         </div>
-                                     </div>
-                                 ))}
-                             </div>
-                             
-                             <div className="pt-2">
-                                 <button 
-                                     onClick={() => handleGenerateImage(groupIndex)}
-                                     disabled={isGroupGenerating || groupShots.every(s => !s.content.trim())}
-                                     className="w-full py-3 bg-gradient-to-r from-cinematic-700 to-cinematic-800 hover:from-cinematic-600 hover:to-cinematic-700 text-white font-bold rounded-lg border border-cinematic-600 shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
-                                 >
-                                     {isGroupGenerating ? <Loader2 className="animate-spin" size={16} /> : <Clapperboard size={16} />}
-                                     {generatedFrame?.imageUrl ? "重新生成 (4K 2x2)" : "生成本组分镜 (4K 2x2)"}
-                                 </button>
-                             </div>
-                         </div>
-
-                         {/* RIGHT: IMAGE RESULT AREA */}
-                         <div className="xl:w-1/2 flex flex-col">
-                             <div className="flex justify-between items-center mb-2">
-                                 <h3 className="text-sm font-bold text-white flex items-center gap-2"><Film size={16} className="text-cinematic-gold"/> 视觉呈现</h3>
-                                 {isOverrideActive && (
-                                    <div className="flex items-center gap-1 text-[10px] text-cinematic-gold bg-cinematic-gold/10 px-2 py-0.5 rounded">
-                                        <Layout size={10} /> 使用子场景视角
-                                    </div>
-                                 )}
-                             </div>
-                             
-                             <div className="flex-1 bg-black rounded-xl border border-cinematic-800 relative overflow-hidden flex items-center justify-center min-h-[300px]">
-                                 {generatedFrame?.imageUrl ? (
-                                     <>
-                                         <img 
-                                             src={generatedFrame.imageUrl} 
-                                             className="max-h-[500px] w-full object-contain cursor-pointer" 
-                                             onClick={() => setViewingImage(generatedFrame.imageUrl || null)}
-                                         />
-                                         <div className="absolute bottom-2 right-2 flex gap-2">
-                                              {hasHistory && (
-                                                  <button 
-                                                    onClick={() => {
-                                                        setShowHistoryForGroup(showHistoryForGroup === groupIndex ? null : groupIndex);
-                                                        setCompareTargetGroup(groupIndex);
-                                                        setComparingImage(generatedFrame.imageHistory![0]); // Default compare to latest history
-                                                    }}
-                                                    className="p-2 bg-black/60 hover:bg-cinematic-700 text-white rounded-full backdrop-blur border border-white/10"
-                                                    title="历史版本 & 对比"
-                                                  >
-                                                      <History size={16} />
-                                                  </button>
-                                              )}
-                                              <button 
-                                                onClick={() => setActiveRefineGroupIndex(activeRefineGroupIndex === groupIndex ? null : groupIndex)}
-                                                className="p-2 bg-black/60 hover:bg-cinematic-gold hover:text-black text-white rounded-full backdrop-blur border border-white/10"
-                                                title="局部微调 (Refine)"
-                                              >
-                                                  <Settings2 size={16} />
-                                              </button>
-                                         </div>
-                                     </>
-                                 ) : isGroupGenerating ? (
-                                     <div className="flex flex-col items-center gap-3">
-                                         <Loader2 className="animate-spin text-cinematic-gold" size={32} />
-                                         <span className="text-xs text-slate-500">正在绘制 4K 图像...</span>
-                                     </div>
-                                 ) : (
-                                     <span className="text-xs text-slate-600">等待生成</span>
-                                 )}
-                             </div>
-
-                             {/* INLINE TOOLS: REFINE & HISTORY */}
-                             {activeRefineGroupIndex === groupIndex && generatedFrame?.imageUrl && (
-                                <div className="mt-2 bg-cinematic-900 border border-cinematic-700 rounded-lg p-3 animate-in slide-in-from-top-2">
-                                     <div className="flex justify-between items-center mb-2">
-                                         <span className="text-xs font-bold text-cinematic-gold uppercase">4K 局部微调 / Refine</span>
-                                         <button onClick={() => setActiveRefineGroupIndex(null)}><X size={14} className="text-slate-500"/></button>
-                                     </div>
-                                     <div className="flex gap-2 mb-2">
-                                         {[1,2,3,4].map(n => (
-                                             <button 
-                                                key={n} 
-                                                onClick={() => setRefinePanelNum(n)}
-                                                className={`flex-1 py-2 rounded text-xs font-bold border transition-colors ${refinePanelNum === n ? 'bg-cinematic-gold text-black border-cinematic-gold' : 'bg-cinematic-800 text-slate-400 border-cinematic-700 hover:text-white'}`}
-                                             >
-                                                 镜头 #{n}
-                                             </button>
-                                         ))}
-                                     </div>
-                                     <div className="flex gap-2">
-                                         <input 
-                                             value={refineInstruction}
-                                             onChange={e => setRefineInstruction(e.target.value)}
-                                             placeholder={`修改第 #${refinePanelNum} 号镜头: "改为人物特写..."`}
-                                             className="flex-1 bg-black border border-cinematic-700 rounded px-3 py-2 text-xs text-white outline-none focus:border-cinematic-gold"
-                                             onKeyDown={(e) => e.key === 'Enter' && handleRefinePanel()}
-                                         />
-                                         <button onClick={handleRefinePanel} disabled={isRefining} className="px-4 bg-cinematic-accent text-white rounded text-xs font-bold disabled:opacity-50 flex items-center gap-1">
-                                             {isRefining ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>} 精修
-                                         </button>
-                                     </div>
-                                     <div className="text-[10px] text-slate-500 mt-1 pl-1">
-                                         * AI 将只重绘第 #{refinePanelNum} 号镜头，保持其他 3 个镜头像素级不变。
-                                     </div>
-                                </div>
-                             )}
-
-                             {showHistoryForGroup === groupIndex && generatedFrame?.imageHistory && (
-                                 <div className="mt-2 p-3 bg-cinematic-900 border border-cinematic-700 rounded-lg animate-in slide-in-from-top-2">
-                                     <div className="flex justify-between items-center mb-2">
-                                         <span className="text-xs font-bold text-slate-300 uppercase flex items-center gap-2"><History size={12}/> 历史版本 (点击对比)</span>
-                                         <button onClick={() => setShowHistoryForGroup(null)}><X size={14} className="text-slate-500"/></button>
-                                     </div>
-                                     <div className="grid grid-cols-4 gap-2">
-                                         {generatedFrame.imageHistory.map((hUrl, hIdx) => (
-                                             <div 
-                                                key={hIdx} 
-                                                className="aspect-video bg-black rounded border border-cinematic-700 cursor-pointer overflow-hidden hover:border-cinematic-gold relative group"
-                                                onClick={() => {
-                                                    setComparingImage(hUrl);
-                                                    setCompareTargetGroup(groupIndex);
-                                                }}
-                                             >
-                                                 <img src={hUrl} className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" />
-                                                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40">
-                                                     <GitCompare size={16} className="text-white"/>
-                                                 </div>
-                                             </div>
-                                         ))}
-                                     </div>
-                                 </div>
-                             )}
-                         </div>
-                     </div>
-                </div>
-            );
-        })}
-
-        <div className="flex justify-center py-4">
-            <button 
-                onClick={handleAddGroup}
-                className="px-6 py-3 bg-cinematic-900 border-2 border-dashed border-cinematic-700 hover:border-cinematic-gold text-slate-400 hover:text-cinematic-gold rounded-xl flex items-center gap-2 transition-all font-bold"
-            >
-                <PlusCircle size={20} /> 添加下一组镜头 (Add Shots {scriptShots.length + 1}-{scriptShots.length + 4})
-            </button>
-        </div>
-
-      </div>
-
-       {renderImageSelectorModal()}
-
-       {viewingImage && (
-            <div 
-                className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
-                onClick={() => setViewingImage(null)}
-            >
-                <img 
-                    src={viewingImage} 
-                    className="max-w-full max-h-full object-contain shadow-2xl rounded-sm"
-                    alt="Full Screen"
-                    onClick={(e) => e.stopPropagation()} 
-                />
-                <button 
-                    className="absolute top-4 right-4 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white"
-                    onClick={() => setViewingImage(null)}
-                >
-                    <X size={24} />
-                </button>
-            </div>
-        )}
-
-        {comparingImage && compareTargetGroup !== null && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in fade-in">
-                <div className="bg-cinematic-900 border border-cinematic-gold rounded-xl p-4 max-w-5xl w-full flex flex-col gap-4 relative shadow-2xl h-[80vh]">
-                     <div className="flex justify-between items-center text-cinematic-gold border-b border-cinematic-700 pb-2 flex-shrink-0">
-                         <h3 className="font-bold flex items-center gap-2"><GitCompare size={18}/> 版本对比 - Group {compareTargetGroup + 1}</h3>
-                         <button onClick={() => { setComparingImage(null); setCompareTargetGroup(null); }} className="hover:text-white"><X size={20}/></button>
-                     </div>
-                     
-                     <div className="flex gap-4 flex-1 min-h-0">
-                         <div className="flex-1 flex flex-col gap-2">
-                             <span className="text-xs font-bold text-slate-400 text-center uppercase flex-shrink-0">当前版本 (Current)</span>
-                             <div className="flex-1 bg-black rounded-lg border border-cinematic-700 overflow-hidden flex items-center justify-center relative">
-                                 <img src={generatedFrames[compareTargetGroup]?.imageUrl} className="max-w-full max-h-full object-contain absolute"/>
-                             </div>
-                         </div>
-                         <div className="flex-1 flex flex-col gap-2">
-                             <span className="text-xs font-bold text-cinematic-gold text-center uppercase flex-shrink-0">历史选定 (History)</span>
-                             <div className="flex-1 bg-black rounded-lg border border-cinematic-gold overflow-hidden flex items-center justify-center relative">
-                                 <img src={comparingImage} className="max-w-full max-h-full object-contain absolute"/>
-                             </div>
-                         </div>
-                     </div>
-                     
-                     <div className="flex justify-center flex-shrink-0 pt-2">
-                         <button 
-                            onClick={() => handleSwitchVersion(comparingImage)}
-                            className="px-8 py-3 bg-cinematic-accent hover:bg-blue-600 text-white font-bold rounded-lg shadow-lg flex items-center gap-2"
-                         >
-                             <ArrowRightLeft size={18} /> 恢复/使用此历史版本
-                         </button>
-                     </div>
-                </div>
-            </div>
-        )}
-
-    </div>
-  );
-};
+                    <div className="flex bg-cinematic-900 p-1 rounded-lg border border-cinematic-700">
+                        <button
+                            onClick={() => setTargetAspectRatio("16:9")}
+                            className={`flex-1 py-2 rounded-md text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                                targetAspectRatio === "16:9" 
+                                ? "bg-cinematic-700 text-white shadow-md" 
+                                : "text-slate-500 hover:text-slate-300"
+                            }`}
+                        >
+                            <Monitor size={14} /> 电影横屏 (16:9)
+                        </button>
+                        <button
