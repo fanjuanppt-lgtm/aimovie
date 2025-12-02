@@ -74,7 +74,7 @@ const App: React.FC = () => {
         setStoryEggs(e);
         setCharacters(c);
         setStoryboards((s || []).sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0)));
-        setScenes(sc || []);
+        setScenes((sc || []).sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0)));
       } catch (error) {
         console.error("Failed to load user data:", error);
       } finally {
@@ -166,14 +166,30 @@ const App: React.FC = () => {
   const addScene = async (s: Scene) => {
       if (!currentUser) return;
       try {
-          const newScene = injectOwner(s);
-          await dbService.saveScene(newScene);
+          let finalScene = injectOwner(s);
+          // Set orderIndex if new
+          if (finalScene.orderIndex === undefined) {
+             const siblings = scenes.filter(sc => sc.storyEggId === s.storyEggId);
+             const maxIndex = siblings.length > 0 ? Math.max(...siblings.map(sc => sc.orderIndex || 0)) : -1;
+             finalScene = { ...finalScene, orderIndex: maxIndex + 1 };
+          }
+
+          await dbService.saveScene(finalScene);
           setScenes(prev => {
               const exists = prev.find(item => item.id === s.id);
-              return exists ? prev.map(item => item.id === s.id ? newScene : item) : [...prev, newScene];
+              return exists ? prev.map(item => item.id === s.id ? finalScene : item) : [...prev, finalScene];
           });
       } catch (error) { console.error(error); }
   }
+
+  const updateScene = async (s: Scene) => {
+      if (!currentUser) return;
+      try {
+          const updated = injectOwner(s);
+          await dbService.saveScene(updated);
+          setScenes(prev => prev.map(item => item.id === s.id ? updated : item));
+      } catch (error) { console.error(error); }
+  };
 
   const addStoryboard = async (s: Storyboard) => {
     if (!currentUser) return;
@@ -303,6 +319,7 @@ const App: React.FC = () => {
                     onRestoreCharacter={restoreCharacter}
                     onHardDeleteCharacter={hardDeleteCharacter}
                     onUpdateStoryboard={updateStoryboard}
+                    onUpdateScene={updateScene}
                 />
             } 
           />

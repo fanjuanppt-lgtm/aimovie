@@ -84,6 +84,7 @@ export interface Character {
   ownerId: string; // New: Data Isolation
   universeId: string;
   storyEggId: string; 
+  role?: string; // New: Persist the character's dramatic role (Protagonist, Antagonist, etc.)
   roots: CharacterRoots;
   shape: CharacterShape;
   soul: CharacterSoul;

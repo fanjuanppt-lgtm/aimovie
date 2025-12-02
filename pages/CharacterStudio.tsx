@@ -134,6 +134,9 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
   // New: Cover Image Logic
   const [coverImageId, setCoverImageId] = useState<string | undefined>(undefined);
 
+  // New: Visual Description Collapse State
+  const [isVisualDescExpanded, setIsVisualDescExpanded] = useState(false);
+
   // UNIFIED SHOT STATE (Standard + Custom)
   const [shotDefs, setShotDefs] = useState<ShotDef[]>(DEFAULT_SHOTS);
   
@@ -196,6 +199,10 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
   const hasStage1 = checkStage('01 正面全身 (基准)') || activeImages.some(img => img.angle.startsWith('01'));
 
   useEffect(() => {
+    // IMPORTANT: Reset Reference Image when switching characters to avoid contamination
+    setRefImage(null);
+    if (refInputRef.current) refInputRef.current.value = '';
+
     if (isEditing && characterId && characters.length > 0) {
       if (loadedRef.current !== characterId) {
         const existingChar = characters.find(c => c.id === characterId);
@@ -207,6 +214,10 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
           setVisualDesc(existingChar.visualDescription || '');
           setGeneratedImages(existingChar.images || []);
           setCoverImageId(existingChar.coverImageId);
+          // Load saved role if exists, else default
+          if (existingChar.role) {
+             setRole(existingChar.role);
+          }
           
           if (existingChar.shotDefs && existingChar.shotDefs.length > 0) {
               setShotDefs(existingChar.shotDefs);
@@ -221,9 +232,20 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
           loadedRef.current = characterId; 
         }
       }
-    } else if (egg && !brief && !isEditing) {
+    } else {
+       // New Character Mode or Switched to New
        if (loadedRef.current !== 'new') {
-           setBrief(`故事背景：${egg.premise}。`);
+           if (egg) setBrief(`故事背景：${egg.premise}。`);
+           // CLEAR ALL STATE TO PREVENT CROSS-CONTAMINATION
+           setRoots(initialRoots);
+           setShape(initialShape);
+           setSoul(initialSoul);
+           setGeneratedImages([]);
+           setVisualDesc('');
+           setCoverImageId(undefined);
+           setShotDefs(DEFAULT_SHOTS);
+           setRefImage(null);
+           
            loadedRef.current = 'new';
        }
     }
@@ -233,7 +255,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
     if (!brief.trim()) return alert("请输入简要描述");
     if (!universe || !egg) return;
 
-    setGenState({ isLoading: true, status: `AI 正在构思...` });
+    setGenState({ isLoading: true, status: `AI 正在研读剧本并构思...` });
     try {
       const context = `
         宇宙类型: ${universe.type}
@@ -285,10 +307,15 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
           const tempChar: Character = {
               id: 'temp', ownerId: '', universeId: universeId!, storyEggId: eggId!, 
               roots, shape, soul, summary: brief, 
-              images: generatedImages
+              role: role,
+              images: generatedImages // Use currently generated images (if any)
           };
+          
+          // DO NOT PASS SCRIPT ANYMORE, to avoid distractions. Profile is the law.
           const desc = await generateCharacterVisualDescription(tempChar);
+          
           setVisualDesc(desc);
+          setIsVisualDescExpanded(true); // Auto expand after generation
       } catch (e: any) {
           alert("AI 描述生成失败: " + e.message);
       } finally {
@@ -314,16 +341,21 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
   const autoSaveImages = async (newImages: CharacterImage[], newShotDefs?: ShotDef[]) => {
     if (!isEditing || !characterId) return; 
     
+    // Retrieve existing character to preserve orderIndex
+    const existingChar = characters.find(c => c.id === characterId);
+
     const charToSave: Character = {
         id: characterId,
         ownerId: '', 
         universeId: universeId!,
         storyEggId: eggId!, 
+        role: role, // Save Role
         roots, shape, soul, summary: brief,
         visualDescription: visualDesc,
         images: newImages,
         coverImageId: coverImageId,
-        shotDefs: newShotDefs || shotDefs
+        shotDefs: newShotDefs || shotDefs,
+        orderIndex: existingChar?.orderIndex // Preserve orderIndex
     };
 
     try {
@@ -434,14 +466,38 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
     }
     
     let currentRefImage = refImage;
+    let refType: 'identity' | 'style' = 'identity';
 
-    // For later stages, ensure consistency with Stage 1 (01)
-    if (shot.id !== '01') {
+    const isMasterShot = shot.id === '01' || shot.label.startsWith('01');
+
+    // LOGIC FOR SHOT 01 (Master Shot):
+    if (isMasterShot) {
+        if (!refImage) {
+            // If manual ref is NOT provided, try to find PROTAGONIST cover for style consistency
+            // But only if current character is NOT the protagonist (or role undefined)
+            const isProtagonist = role && role.includes("主角");
+            if (!isProtagonist) {
+                const protagonist = characters.find(c => c.storyEggId === eggId && c.role && c.role.includes("主角"));
+                if (protagonist && protagonist.coverImageId) {
+                    const coverImg = protagonist.images.find(img => img.id === protagonist.coverImageId);
+                    if (coverImg) {
+                        console.log("Using Protagonist Cover as Style Reference for", roots.name);
+                        currentRefImage = coverImg.url;
+                        refType = 'style'; // CRITICAL: Use style only, do not copy face
+                    }
+                }
+            }
+        }
+    } 
+    // LOGIC FOR SHOTS 02-06 (Angles):
+    else {
+        // Try to find Shot 01 of THIS character to maintain identity
         const masterShot = activeImages.find(img => img.angle.startsWith('01'));
         if (masterShot) {
             currentRefImage = masterShot.url;
+            refType = 'identity';
         } else if (!refImage) {
-            // Warn or just proceed
+             // If no master shot and no manual ref, proceed without ref (or warn?)
         }
     }
     
@@ -458,7 +514,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
     const currentImages = generatedImages.filter(img => img.angle !== shot.label);
 
     try {
-        const base64 = await generateCharacterImage(tempChar, shot.prompt, undefined, currentRefImage);
+        const base64 = await generateCharacterImage(tempChar, shot.prompt, undefined, currentRefImage, undefined, refType);
         const newImg: CharacterImage = {
             id: Date.now().toString(),
             url: base64,
@@ -540,16 +596,19 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
       
       // Auto save if editing
       if (isEditing && characterId) {
+          const existingChar = characters.find(c => c.id === characterId);
           const charToSave: Character = {
             id: characterId,
             ownerId: '', 
             universeId: universeId!,
             storyEggId: eggId!, 
+            role: role, // Save Role
             roots, shape, soul, summary: brief,
             visualDescription: visualDesc,
             images: generatedImages,
             coverImageId: imgId,
-            shotDefs: shotDefs, 
+            shotDefs: shotDefs,
+            orderIndex: existingChar?.orderIndex // Preserve Order
           };
           try {
              await onSave(charToSave);
@@ -564,14 +623,20 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
     setIsSaving(true);
     try {
       const idToUse = isEditing && characterId ? characterId : Date.now().toString();
+      
+      // Try to find existing char to preserve order
+      const existingChar = characters.find(c => c.id === idToUse);
+
       const newChar: Character = {
         id: idToUse, ownerId: '', universeId: universeId!, storyEggId: eggId!, 
+        role: role, // Save Role
         roots, shape, soul, summary: brief, 
         visualDescription: visualDesc, 
         images: generatedImages,
         coverImageId: coverImageId, // Save Cover
         shotDefs: shotDefs, 
-        customShots: [] 
+        customShots: [],
+        orderIndex: existingChar?.orderIndex // Preserve orderIndex from existing, or undefined for new
       };
       await onSave(newChar);
       alert(isEditing ? "更新成功！" : "归档成功！");
@@ -816,6 +881,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
         <div className="flex flex-col gap-2 mb-3 bg-cinematic-900/50 p-3 rounded-lg">
            <div className="flex gap-2 flex-col lg:flex-row items-center">
              <div className="lg:w-1/4 w-full">
+               <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">剧作定位</label>
                <select 
                  value={role} 
                  onChange={(e) => setRole(e.target.value)}
@@ -825,15 +891,18 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
                </select>
              </div>
 
-             <input
-               type="text"
-               value={brief}
-               onChange={(e) => setBrief(e.target.value)}
-               placeholder="简短概念 (例如：眼神忧郁的杀手)..."
-               className="flex-1 w-full bg-cinematic-800 border border-cinematic-700 rounded px-3 py-1.5 text-white text-xs focus:border-cinematic-accent outline-none"
-             />
+             <div className="flex-1 w-full">
+                <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">人物简介 (AI 参考要素)</label>
+                <input
+                type="text"
+                value={brief}
+                onChange={(e) => setBrief(e.target.value)}
+                placeholder="简要描述 (例如：眼神忧郁的杀手)..."
+                className="w-full bg-cinematic-800 border border-cinematic-700 rounded px-3 py-1.5 text-white text-xs focus:border-cinematic-accent outline-none"
+                />
+             </div>
              
-             <div className="flex gap-2 w-full lg:w-auto">
+             <div className="flex gap-2 w-full lg:w-auto self-end pb-0.5">
                <button 
                  onClick={handleAIGenerateProfile}
                  disabled={genState.isLoading}
@@ -935,63 +1004,89 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
                  4. 影像定妆 (Visual Studio)
              </div>
 
-             {/* Visual Description Section */}
-             <div className="mt-6 mb-4 bg-cinematic-900/50 p-4 rounded-lg border border-cinematic-700">
-                <div className="flex justify-between items-end mb-2">
-                    <label className="block text-xs font-bold text-slate-300 uppercase flex items-center gap-2">
-                        <Sparkles size={14} className="text-cinematic-gold"/> AI 定妆描述 (Visual Prompt)
-                    </label>
-                    <div className="flex gap-2">
-                         <div className="flex items-center gap-2 mr-4 border-r border-slate-700 pr-4">
-                             {refImage ? (
-                                <div className="flex items-center gap-2 bg-cinematic-800 border border-cinematic-gold px-2 py-1 rounded">
-                                   <img src={refImage} className="w-4 h-4 rounded object-cover" alt="Ref" />
-                                   <span className="text-[10px] text-cinematic-gold font-bold">Ref ON</span>
-                                   <button onClick={() => setRefImage(null)} className="text-slate-400 hover:text-white"><X size={12}/></button>
-                                </div>
-                              ) : (
-                                <button 
-                                   onClick={() => refInputRef.current?.click()}
-                                   className="px-2 py-1 bg-cinematic-900 border border-cinematic-700 hover:border-cinematic-gold text-slate-300 hover:text-white rounded text-[10px] font-medium transition-colors flex items-center gap-1"
-                                >
-                                   <ImageIcon size={12} /> Ref
-                                </button>
-                              )}
-                              <input type="file" accept="image/*" className="hidden" ref={refInputRef} onChange={handleRefImageUpload} />
-                              
+             {/* Visual Description Section (Collapsible) */}
+             <div className="mt-6 mb-4 bg-cinematic-900/50 rounded-lg border border-cinematic-700 overflow-hidden">
+                <div 
+                    className="p-3 bg-cinematic-800/50 flex justify-between items-center cursor-pointer hover:bg-cinematic-700/50 transition-colors"
+                    onClick={() => setIsVisualDescExpanded(!isVisualDescExpanded)}
+                >
+                    <div className="flex items-center gap-2">
+                         <label className="text-xs font-bold text-slate-300 uppercase flex items-center gap-2">
+                            <Sparkles size={14} className="text-cinematic-gold"/> AI 定妆描述 (Visual Prompt)
+                        </label>
+                        {!isVisualDescExpanded && visualDesc && (
+                             <span className="text-[10px] text-slate-500 truncate max-w-[200px]"> - {visualDesc}</span>
+                        )}
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation(); // Prevent collapse
+                                handleGenVisualDesc();
+                            }}
+                            disabled={isGeneratingDesc}
+                            className="text-[10px] flex items-center gap-1 text-cinematic-gold hover:text-amber-300 bg-cinematic-900 px-2 py-1 rounded border border-cinematic-700 hover:border-cinematic-gold/30 transition-colors disabled:opacity-50"
+                        >
+                            {isGeneratingDesc ? <Loader2 className="animate-spin" size={10}/> : <Sparkles size={10}/>} 重生成 (Profile First)
+                        </button>
+                        {isVisualDescExpanded ? <ChevronUp size={16} className="text-slate-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
+                    </div>
+                </div>
+
+                {isVisualDescExpanded && (
+                    <div className="p-4 border-t border-cinematic-700 animate-in slide-in-from-top-2">
+                         <div className="flex items-center gap-2 mb-2 pb-2 border-b border-cinematic-700/50">
+                             <div className="flex items-center gap-2">
+                                 {refImage ? (
+                                    <div className="flex items-center gap-2 bg-cinematic-800 border border-cinematic-gold px-2 py-1 rounded">
+                                       <img src={refImage} className="w-4 h-4 rounded object-cover" alt="Ref" />
+                                       <span className="text-[10px] text-cinematic-gold font-bold">Ref ON</span>
+                                       <button onClick={() => { setRefImage(null); if(refInputRef.current) refInputRef.current.value = ''; }} className="text-slate-400 hover:text-white"><X size={12}/></button>
+                                    </div>
+                                  ) : (
+                                    <button 
+                                       onClick={() => refInputRef.current?.click()}
+                                       className="px-2 py-1 bg-cinematic-900 border border-cinematic-700 hover:border-cinematic-gold text-slate-300 hover:text-white rounded text-[10px] font-medium transition-colors flex items-center gap-1"
+                                       title="上传临时参考图 (仅影响当前生成，不保存)"
+                                    >
+                                       <ImageIcon size={12} /> 上传 Ref (辅助AI描述)
+                                    </button>
+                                  )}
+                                  <input type="file" accept="image/*" className="hidden" ref={refInputRef} onChange={handleRefImageUpload} />
+                             </div>
+                             
+                             <div className="h-4 w-px bg-slate-700 mx-2"></div>
+
                               <input type="file" accept="image/*" className="hidden" ref={directUploadInputRef} onChange={handleDirectImageUpload}/>
                                <button 
                                  onClick={() => directUploadInputRef.current?.click()}
                                  className="px-2 py-1 bg-cinematic-900 border border-cinematic-700 hover:border-cinematic-gold text-slate-300 hover:text-white rounded text-[10px] font-medium flex items-center gap-1"
                                >
-                                 <Upload size={12} /> Upload
+                                 <Upload size={12} /> 直接上传成图
                                </button>
 
                                <button 
                                  onClick={() => setShowTrash(true)}
-                                 className="px-2 py-1 bg-cinematic-900 border border-cinematic-700 hover:border-red-500 text-slate-300 hover:text-red-400 rounded text-[10px] font-medium flex items-center gap-1"
+                                 className="px-2 py-1 bg-cinematic-900 border border-cinematic-700 hover:border-red-500 text-slate-300 hover:text-red-400 rounded text-[10px] font-medium flex items-center gap-1 ml-auto"
                                >
-                                 <Trash2 size={12} /> Bin
+                                 <Trash2 size={12} /> 回收站
                                  {trashedImages.length > 0 && <span className="bg-red-500 text-white text-[8px] px-1 rounded-full">{trashedImages.length}</span>}
                                </button>
                          </div>
 
-                        <button
-                            onClick={handleGenVisualDesc}
-                            disabled={isGeneratingDesc}
-                            className="text-[10px] flex items-center gap-1 text-cinematic-gold hover:text-amber-300 bg-cinematic-800 px-2 py-1 rounded border border-cinematic-700 hover:border-cinematic-gold/30 transition-colors disabled:opacity-50"
-                        >
-                            {isGeneratingDesc ? <Loader2 className="animate-spin" size={10}/> : <Sparkles size={10}/>} AI 生成描述
-                        </button>
+                        <textarea
+                            value={visualDesc}
+                            onChange={(e) => setVisualDesc(e.target.value)}
+                            rows={4}
+                            className="w-full bg-cinematic-900 border border-cinematic-700 rounded px-3 py-2 text-white outline-none focus:border-cinematic-gold resize-none text-xs leading-relaxed"
+                            placeholder="AI 将根据核心身份、外貌和性格自动生成详细的画面描述词 (严格遵守性别和外貌设定)..."
+                        />
+                        <div className="mt-2 text-[10px] text-slate-500 flex items-center gap-1">
+                            <Info size={10}/> 此描述将作为所有定妆照生成的基础 Prompt。
+                        </div>
                     </div>
-                </div>
-                <textarea
-                    value={visualDesc}
-                    onChange={(e) => setVisualDesc(e.target.value)}
-                    rows={2}
-                    className="w-full bg-cinematic-900 border border-cinematic-700 rounded px-3 py-2 text-white outline-none focus:border-cinematic-gold resize-none text-xs leading-relaxed"
-                    placeholder="AI 将根据核心身份、外貌和性格自动生成详细的画面描述词..."
-                />
+                )}
              </div>
              
              {activeImages.length > 0 && (
@@ -1087,6 +1182,17 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ universes, sto
                      
                      {/* Overlay Actions */}
                      <div className="absolute top-2 right-8 z-20 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setViewingImage(img.url);
+                                }}
+                                className="p-1.5 bg-black/60 hover:bg-cinematic-gold hover:text-black rounded-full text-white/80 transition-colors"
+                                title="放大查看"
+                            >
+                                <ZoomIn size={14} />
+                            </button>
+
                            <button 
                                onClick={(e) => handleSetCover(e, img.id)}
                                className={`p-1.5 rounded-full backdrop-blur transition-colors ${isCover ? 'bg-cinematic-gold text-black' : 'bg-black/60 text-white hover:text-cinematic-gold'}`}

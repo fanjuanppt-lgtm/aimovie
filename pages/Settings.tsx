@@ -5,7 +5,7 @@ import {
     Settings as SettingsIcon, Save, Key, CheckCircle, AlertCircle, 
     ExternalLink, Zap, Database, Download, Upload, HardDrive, 
     ShieldAlert, Activity, Terminal, HelpCircle, Link as LinkIcon, MessageSquare, Server,
-    Video, Cpu
+    Video, Cpu, Archive, FileText
 } from 'lucide-react';
 import { diagnoseNetwork, DiagnosisResult } from '../services/geminiService';
 import { dbService } from '../services/db';
@@ -40,9 +40,11 @@ export const Settings: React.FC = () => {
 
   // -- DB Management --
   const [dbStats, setDbStats] = useState<any>(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExportingText, setIsExportingText] = useState(false);
+  const [isExportingFull, setIsExportingFull] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   const [showHelp, setShowHelp] = useState(false);
@@ -197,24 +199,46 @@ export const Settings: React.FC = () => {
   };
 
   // DB Handlers
-  const handleExportData = async () => {
+  const handleExportText = async () => {
       if (!currentUser) return;
-      setIsExporting(true);
+      setIsExportingText(true);
       try {
-          const jsonString = await dbService.exportUserData(currentUser.id);
+          // Pass false to exclude images
+          const jsonString = await dbService.exportUserData(currentUser.id, false);
           const blob = new Blob([jsonString], { type: 'application/json' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `AI_Cinema_Backup_${currentUser.username}_${new Date().toISOString().slice(0,10)}.json`;
+          a.download = `AI_Cinema_Lite_${currentUser.username}_${new Date().toISOString().slice(0,10)}.json`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-      } catch (e) { alert("导出失败"); } finally { setIsExporting(false); }
+      } catch (e) { alert("导出失败"); } finally { setIsExportingText(false); }
+  };
+  
+  const handleExportFullZip = async () => {
+      if (!currentUser) return;
+      setIsExportingFull(true);
+      try {
+          const zipBlob = await dbService.exportFullBackupZip(currentUser.id);
+          const url = URL.createObjectURL(zipBlob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `AI_Cinema_FULL_${currentUser.username}_${new Date().toISOString().slice(0,10)}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+      } catch (e: any) {
+          console.error(e);
+          alert("全量导出失败，可能是数据量过大或内存不足。请尝试使用轻量级文本导出。");
+      } finally {
+          setIsExportingFull(false);
+      }
   };
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleJsonImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!currentUser) return;
       const file = e.target.files?.[0];
       if (!file) return;
@@ -227,7 +251,7 @@ export const Settings: React.FC = () => {
                   const content = reader.result as string;
                   const parsedData = JSON.parse(content);
                   await dbService.importData(parsedData, currentUser.id);
-                  alert("数据导入成功！页面将刷新。");
+                  alert("文本数据导入成功！页面将刷新。");
                   window.location.reload();
               } catch (err: any) {
                   console.error(err);
@@ -237,6 +261,25 @@ export const Settings: React.FC = () => {
           };
           reader.onerror = () => { alert("读取失败"); setIsImporting(false); };
       }, 100);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+  
+  const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!currentUser) return;
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setIsImporting(true);
+      try {
+          await dbService.importFullBackupZip(file, currentUser.id);
+          alert("全量数据 (包含图片) 导入成功！页面将刷新。");
+          window.location.reload();
+      } catch (e: any) {
+          console.error(e);
+          alert(`ZIP 恢复失败: ${e.message}`);
+      } finally {
+          setIsImporting(false);
+          if (zipInputRef.current) zipInputRef.current.value = '';
+      }
   };
 
   return (
@@ -560,14 +603,26 @@ export const Settings: React.FC = () => {
                         ) : <span className="text-xs text-slate-500">Loading stats...</span>}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 mt-auto">
-                        <button onClick={handleExportData} disabled={isExporting} className="py-2 bg-cinematic-700 hover:bg-cinematic-600 text-white rounded font-bold text-xs flex items-center justify-center gap-2">
-                            <Download size={14} /> 备份当前用户数据
+                    <div className="grid grid-cols-2 gap-3 mt-auto mb-3">
+                         <div className="col-span-2 text-[10px] text-slate-500 uppercase font-bold mb-1">文本备份 (Text Only)</div>
+                        <button onClick={handleExportText} disabled={isExportingText} className="py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-bold text-xs flex items-center justify-center gap-2">
+                            <FileText size={14} /> 仅导出JSON
                         </button>
-                        <button onClick={() => fileInputRef.current?.click()} disabled={isImporting} className="py-2 bg-cinematic-700 hover:bg-cinematic-600 text-white rounded font-bold text-xs flex items-center justify-center gap-2">
-                            <Upload size={14} /> 恢复数据
+                        <button onClick={() => fileInputRef.current?.click()} disabled={isImporting} className="py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-bold text-xs flex items-center justify-center gap-2">
+                            <Upload size={14} /> 导入JSON
                         </button>
-                        <input type="file" accept=".json" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+                        <input type="file" accept=".json" ref={fileInputRef} className="hidden" onChange={handleJsonImport} />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-3 border-t border-cinematic-700">
+                         <div className="col-span-2 text-[10px] text-cinematic-gold uppercase font-bold mb-1">全量备份 (Full Backup with Images)</div>
+                        <button onClick={handleExportFullZip} disabled={isExportingFull} className="py-2 bg-cinematic-gold hover:bg-amber-400 text-black rounded font-bold text-xs flex items-center justify-center gap-2 shadow-lg">
+                            <Archive size={14} /> 导出 ZIP 包
+                        </button>
+                        <button onClick={() => zipInputRef.current?.click()} disabled={isImporting} className="py-2 bg-cinematic-700 hover:bg-cinematic-600 text-white rounded font-bold text-xs flex items-center justify-center gap-2 border border-cinematic-gold/30">
+                            <Upload size={14} /> 导入 ZIP 包
+                        </button>
+                        <input type="file" accept=".zip" ref={zipInputRef} className="hidden" onChange={handleZipImport} />
                     </div>
                </div>
           </div>

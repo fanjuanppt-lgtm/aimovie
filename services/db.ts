@@ -1,5 +1,6 @@
 
 import { UserProfile } from '../types';
+import JSZip from 'jszip';
 
 const DB_NAME = 'AI_Cinema_DB';
 const DB_VERSION = 8; // Upgrade for Users table and ownerId index
@@ -128,6 +129,31 @@ const count = async (storeName: string, ownerId?: string): Promise<number> => {
     }
 };
 
+// Helper: Convert Base64 to Blob
+const base64ToBlob = (base64: string): Blob => {
+    const parts = base64.split(';base64,');
+    const contentType = parts[0].split(':')[1];
+    const raw = window.atob(parts[1]);
+    const rawLength = raw.length;
+    const uInt8Array = new Uint8Array(rawLength);
+
+    for (let i = 0; i < rawLength; ++i) {
+        uInt8Array[i] = raw.charCodeAt(i);
+    }
+
+    return new Blob([uInt8Array], { type: contentType });
+};
+
+// Helper: Convert Blob to Base64
+const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+};
+
 // --- AUTH SERVICES ---
 
 const registerUser = async (user: UserProfile): Promise<void> => {
@@ -215,9 +241,8 @@ export const dbService = {
   getScenes: (ownerId: string) => getAllByOwner<any>(STORE_SCENES, ownerId),
   saveScene: (s: any) => put(STORE_SCENES, s),
 
-  // Backup & Restore (Needs update to support filtering by owner, or full admin dump)
-  // For now, let's keep it simple: export EVERYTHING for this user
-  exportUserData: async (ownerId: string) => {
+  // LIGHTWEIGHT BACKUP (Text Only)
+  exportUserData: async (ownerId: string, includeImages: boolean = false) => {
     const [universes, eggs, characters, storyboards, scenes] = await Promise.all([
         getAllByOwner(STORE_UNIVERSES, ownerId),
         getAllByOwner(STORE_EGGS, ownerId),
@@ -226,17 +251,235 @@ export const dbService = {
         getAllByOwner(STORE_SCENES, ownerId)
     ]);
 
+    // If text only, strip images
+    if (!includeImages) {
+        const stripImg = (items: any[], type: 'char' | 'scene' | 'storyboard') => {
+             return items.map(item => {
+                 const clone = { ...item };
+                 if (type === 'char') clone.images = [];
+                 if (type === 'scene') clone.images = [];
+                 if (type === 'storyboard') {
+                     clone.frames = clone.frames.map((f: any) => ({ ...f, imageUrl: '', imageHistory: [] }));
+                 }
+                 return clone;
+             });
+        };
+        
+        const backupData = {
+            timestamp: new Date().toISOString(),
+            version: 3,
+            ownerId,
+            type: 'text-only',
+            data: { 
+                universes, 
+                eggs, 
+                characters: stripImg(characters, 'char'), 
+                storyboards: stripImg(storyboards, 'storyboard'), 
+                scenes: stripImg(scenes, 'scene') 
+            }
+        };
+        return JSON.stringify(backupData);
+    }
+    
+    // Legacy full JSON export (not recommended for images)
     const backupData = {
         timestamp: new Date().toISOString(),
         version: 3,
         ownerId,
+        type: 'full-json',
         data: { universes, eggs, characters, storyboards, scenes }
     };
-    
     return JSON.stringify(backupData);
   },
 
-  // Import Data (Injects current ownerId)
+  // FULL ZIP BACKUP (Recommended)
+  exportFullBackupZip: async (ownerId: string): Promise<Blob> => {
+      const zip = new JSZip();
+      const assets = zip.folder("assets");
+      
+      const [universes, eggs, characters, storyboards, scenes] = await Promise.all([
+        getAllByOwner(STORE_UNIVERSES, ownerId),
+        getAllByOwner(STORE_EGGS, ownerId),
+        getAllByOwner(STORE_CHARACTERS, ownerId),
+        getAllByOwner(STORE_STORYBOARDS, ownerId),
+        getAllByOwner(STORE_SCENES, ownerId)
+      ]);
+
+      // Process Images Helper
+      const processImages = (items: any[], type: 'char' | 'scene' | 'storyboard') => {
+          return items.map(item => {
+              const clone = { ...item };
+              
+              if (type === 'char' && clone.images) {
+                  clone.images = clone.images.map((img: any) => {
+                      if (img.url && img.url.startsWith('data:')) {
+                          try {
+                              const blob = base64ToBlob(img.url);
+                              // Filename strategy: type_itemId_imgId
+                              const filename = `char_${clone.id}_${img.id}.png`; 
+                              assets?.file(filename, blob);
+                              return { ...img, url: `assets/${filename}` }; // Replace with ref
+                          } catch (e) { return img; }
+                      }
+                      return img;
+                  });
+              }
+
+              if (type === 'scene' && clone.images) {
+                  clone.images = clone.images.map((img: any) => {
+                      if (img.url && img.url.startsWith('data:')) {
+                           try {
+                               const blob = base64ToBlob(img.url);
+                               const filename = `scene_${clone.id}_${img.id}.png`;
+                               assets?.file(filename, blob);
+                               return { ...img, url: `assets/${filename}` };
+                           } catch (e) { return img; }
+                      }
+                      return img;
+                  });
+              }
+
+              if (type === 'storyboard' && clone.frames) {
+                  clone.frames = clone.frames.map((frame: any) => {
+                      const fClone = { ...frame };
+                      if (fClone.imageUrl && fClone.imageUrl.startsWith('data:')) {
+                           try {
+                               const blob = base64ToBlob(fClone.imageUrl);
+                               const filename = `sb_${clone.id}_frame_${fClone.id}.png`;
+                               assets?.file(filename, blob);
+                               fClone.imageUrl = `assets/${filename}`;
+                           } catch(e) {}
+                      }
+                      // Handle history too if needed, but maybe skip history for backup to save space?
+                      // Let's skip history in backup to keep it lighter, or implement if needed.
+                      // For now, strip history images to save massive space
+                      fClone.imageHistory = []; 
+                      return fClone;
+                  });
+              }
+              
+              if (clone.coverImage && clone.coverImage.startsWith('data:')) {
+                  try {
+                       const blob = base64ToBlob(clone.coverImage);
+                       const filename = `univ_${clone.id}_cover.png`;
+                       assets?.file(filename, blob);
+                       clone.coverImage = `assets/${filename}`;
+                  } catch(e) {}
+              }
+
+              return clone;
+          });
+      };
+
+      const cleanUniverses = processImages(universes, 'scene'); // scene type logic handles simple image fields roughly
+      const cleanCharacters = processImages(characters, 'char');
+      const cleanScenes = processImages(scenes, 'scene');
+      const cleanStoryboards = processImages(storyboards, 'storyboard');
+      
+      const dbData = {
+          timestamp: new Date().toISOString(),
+          version: 3,
+          ownerId,
+          type: 'full-zip',
+          data: { 
+              universes: cleanUniverses, 
+              eggs, 
+              characters: cleanCharacters, 
+              storyboards: cleanStoryboards, 
+              scenes: cleanScenes 
+          }
+      };
+      
+      zip.file("database.json", JSON.stringify(dbData, null, 2));
+      
+      return await zip.generateAsync({ type: "blob" });
+  },
+
+  importFullBackupZip: async (zipFile: File, currentOwnerId: string) => {
+      const zip = await JSZip.loadAsync(zipFile);
+      
+      const dbFile = zip.file("database.json");
+      if (!dbFile) throw new Error("无效的备份文件：找不到 database.json");
+      
+      const dbText = await dbFile.async("string");
+      const dbData = JSON.parse(dbText);
+      
+      const { universes, eggs, characters, storyboards, scenes } = dbData.data;
+
+      // Helper: Rehydrate images
+      const rehydrate = async (items: any[], type: 'char' | 'scene' | 'storyboard') => {
+          return Promise.all(items.map(async (item) => {
+              const clone = { ...item };
+              clone.ownerId = currentOwnerId; // Take ownership
+              
+              // Helper to read file from zip
+              const readFile = async (ref: string) => {
+                  if (ref && ref.startsWith('assets/')) {
+                      const filename = ref.split('/')[1];
+                      const file = zip.file(`assets/${filename}`);
+                      if (file) {
+                          const blob = await file.async("blob");
+                          return await blobToBase64(blob);
+                      }
+                  }
+                  return ref;
+              };
+
+              if (clone.coverImage) clone.coverImage = await readFile(clone.coverImage);
+
+              if (type === 'char' && clone.images) {
+                  clone.images = await Promise.all(clone.images.map(async (img: any) => {
+                      return { ...img, url: await readFile(img.url) };
+                  }));
+              }
+
+              if (type === 'scene' && clone.images) {
+                  clone.images = await Promise.all(clone.images.map(async (img: any) => {
+                      return { ...img, url: await readFile(img.url) };
+                  }));
+              }
+              
+              if (type === 'storyboard' && clone.frames) {
+                  clone.frames = await Promise.all(clone.frames.map(async (f: any) => {
+                      return { ...f, imageUrl: await readFile(f.imageUrl) };
+                  }));
+              }
+              
+              return clone;
+          }));
+      };
+
+      const finalUniverses = await rehydrate(universes, 'scene');
+      const finalCharacters = await rehydrate(characters, 'char');
+      const finalScenes = await rehydrate(scenes, 'scene');
+      const finalStoryboards = await rehydrate(storyboards, 'storyboard');
+      
+      // Eggs are text only
+      const finalEggs = eggs.map((e: any) => ({ ...e, ownerId: currentOwnerId }));
+      
+      const tx = (await openDB()).transaction(
+          [STORE_UNIVERSES, STORE_EGGS, STORE_CHARACTERS, STORE_STORYBOARDS, STORE_SCENES],
+          'readwrite'
+      );
+
+      const storePut = (name: string, items: any[]) => {
+          const store = tx.objectStore(name);
+          items.forEach(i => store.put(i));
+      };
+
+      storePut(STORE_UNIVERSES, finalUniverses);
+      storePut(STORE_EGGS, finalEggs);
+      storePut(STORE_CHARACTERS, finalCharacters);
+      storePut(STORE_STORYBOARDS, finalStoryboards);
+      storePut(STORE_SCENES, finalScenes);
+      
+      return new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  // Import Data (Injects current ownerId) - Legacy JSON
   importData: async (data: any, currentOwnerId: string) => {
       if (!data || !data.data) throw new Error("无效备份");
       

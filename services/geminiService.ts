@@ -98,8 +98,6 @@ const callOpenAICompatibleAPI = async (
   jsonMode: boolean = false
 ): Promise<string> => {
   const baseUrl = config.baseUrl?.replace(/\/$/, '') || 'https://api.deepseek.com';
-  // If baseUrl ends with /v1, don't append /chat/completions if it's already full path (unlikely for user input usually)
-  // Standardizing: User inputs host (e.g. https://api.deepseek.com), we append /chat/completions
   const url = `${baseUrl}/chat/completions`;
   const model = config.modelId || 'deepseek-chat';
 
@@ -206,15 +204,12 @@ const cleanAndParseJSON = (text: string) => {
 
 // --- HELPER: CONSTRUCT IMAGE CONFIG ---
 const buildImageModelConfig = (modelId: string, widthRatio: string = "16:9", force4K: boolean = true) => {
-    // Basic config structure
     const config: any = {
         imageConfig: {
             aspectRatio: widthRatio,
         }
     };
 
-    // 'imageSize' is ONLY supported by Pro models (gemini-3-pro-image-preview)
-    // 2.5 Flash Image (Nano Banana) or Flash Lite DOES NOT support imageSize parameter and will error 400 if sent.
     const isPro = modelId.includes('pro');
     
     if (isPro && force4K) {
@@ -224,143 +219,6 @@ const buildImageModelConfig = (modelId: string, widthRatio: string = "16:9", for
     return config;
 };
 
-// --- DIAGNOSTIC TOOLS ---
-
-export interface DiagnosisResult {
-    step: string;
-    status: 'success' | 'warning' | 'error';
-    message: string;
-}
-
-export const diagnoseNetwork = async (
-    geminiKey?: string,
-    imageKey?: string,
-    deepseekConfig?: { provider: 'gemini' | 'deepseek', deepseekKey: string, deepseekBaseUrl: string, deepseekModel: string },
-    target: 'all' | 'text' | 'image' = 'all'
-): Promise<DiagnosisResult[]> => {
-    const results: DiagnosisResult[] = [];
-    const provider = deepseekConfig?.provider || 'gemini';
-    const envKey = process.env.API_KEY;
-
-    if (target === 'all' || target === 'text') {
-        const effectiveTextKey = provider === 'gemini' ? (geminiKey || envKey) : deepseekConfig?.deepseekKey;
-        const getKeySource = (key?: string) => {
-             if (!key) return "None";
-             if (key === envKey) return "Environment (Project)";
-             if (key.length > 5) return "Manual Input";
-             return "Unknown";
-        };
-
-        if (provider === 'gemini') {
-            if (!effectiveTextKey) {
-                results.push({ step: "Gemini Key Check", status: 'error', message: "未检测到 Gemini Key。" });
-            } else {
-                const source = getKeySource(effectiveTextKey);
-                results.push({ step: "Text Key Source", status: 'success', message: `Using: ${source}` });
-                
-                try {
-                    const ai = new GoogleGenAI({ apiKey: effectiveTextKey });
-                    const start = performance.now();
-                    await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: 'ping' });
-                    results.push({
-                        step: "Gemini 文本连接",
-                        status: 'success',
-                        message: `连接成功 (${Math.round(performance.now() - start)}ms)。`
-                    });
-                } catch (e: any) {
-                    results.push({ step: "Gemini 文本连接", status: 'error', message: `连接失败: ${e.message}` });
-                }
-            }
-        } else {
-            if (!effectiveTextKey) {
-                 results.push({ step: "DeepSeek Key Check", status: 'error', message: "未输入 DeepSeek Key。" });
-            } else {
-                 try {
-                    const start = performance.now();
-                    const config: TextGenConfig = {
-                        provider: 'deepseek',
-                        apiKey: effectiveTextKey,
-                        baseUrl: deepseekConfig?.deepseekBaseUrl,
-                        modelId: deepseekConfig?.deepseekModel
-                    };
-                    await callOpenAICompatibleAPI(config, "You are a test bot.", "ping");
-                    results.push({
-                        step: "DeepSeek API 连接",
-                        status: 'success',
-                        message: `连接成功 (${Math.round(performance.now() - start)}ms)。Model: ${config.modelId}`
-                    });
-                 } catch (e: any) {
-                     results.push({ step: "DeepSeek API 连接", status: 'error', message: `连接失败: ${e.message}` });
-                 }
-            }
-        }
-    }
-
-    if (target === 'all' || target === 'image') {
-        let effectiveImageKey = imageKey;
-        if (!effectiveImageKey) {
-             if (provider === 'gemini' && geminiKey) {
-                 effectiveImageKey = geminiKey;
-             } else {
-                 effectiveImageKey = envKey;
-             }
-        }
-        const getImageKeySource = (key?: string) => {
-            if (!key) return "None";
-            if (key === envKey) return "Environment (Paid Project)";
-            if (key === imageKey) return "Manual Image Key";
-            if (key === geminiKey) return "Manual Text Key (Shared)";
-            return "Unknown Source";
-        };
-
-        if (!effectiveImageKey) {
-            results.push({ 
-                step: "绘图引擎配置", 
-                status: 'error', 
-                message: "未检测到可用的画图 Key。请配置“手动 Visual API Key”或关联 Google Cloud 项目。" 
-            });
-        } else {
-            const config = getImageConfig(effectiveImageKey); 
-            const targetModel = config.modelId || 'gemini-3-pro-image-preview';
-            const source = getImageKeySource(effectiveImageKey);
-            results.push({ step: "Image Key Source", status: 'success', message: `Using: ${source}` });
-
-            try {
-                const ai = new GoogleGenAI({ apiKey: effectiveImageKey });
-                 const response = await ai.models.generateContent({
-                     model: targetModel,
-                     contents: { parts: [{ text: "dot" }] },
-                     config: buildImageModelConfig(targetModel, "1:1", false) 
-                 });
-                 const candidate = response.candidates?.[0];
-                 if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
-                     throw new Error(`FinishReason: ${candidate.finishReason} (可能被拦截)`);
-                 }
-
-                 results.push({
-                    step: `图像/视觉引擎 (${targetModel})`,
-                    status: 'success',
-                    message: "连接成功！Billing 权限正常。"
-                });
-            } catch (e: any) {
-                 let msg = e.message || "Unknown error";
-                 let status: 'error' | 'warning' = 'error';
-                 if (msg.includes("403") || msg.includes("PERMISSION_DENIED")) {
-                     msg = "【403 权限拒绝】需要 Billing 权限。请确保 AI Studio 项目已关联结算账户，或者切换到 Flash Image 模型。";
-                 } else if (msg.includes("404")) {
-                     msg = `【404 未找到】模型 ${targetModel} 不可用。`;
-                 } else if (msg.includes("Requested entity was not found")) {
-                     msg = "【关联失效】Project Key 无效。请重新关联项目。";
-                 } else if (msg.includes("400")) {
-                     msg = `【400 参数错误】模型不支持当前 Config (Size/Ratio)。Model: ${targetModel}`;
-                 }
-                 results.push({ step: `图像/视觉引擎 (${targetModel})`, status: status, message: msg });
-            }
-        }
-    }
-    return results;
-}
-
 // --- PUBLIC SERVICES ---
 
 export const generateCharacterProfile = async (
@@ -369,7 +227,7 @@ export const generateCharacterProfile = async (
   role: string,
   textModelStyle: string = 'gemini-2.5-flash',
   existingProfile?: any,
-  fullScript?: string // New optional param for full script context
+  fullScript?: string 
 ): Promise<{ roots: CharacterRoots; shape: CharacterShape; soul: CharacterSoul }> => {
   let styleInstruction = "";
   if (textModelStyle === 'jimeng-style') {
@@ -402,16 +260,19 @@ export const generateCharacterProfile = async (
   // Inject Script Context if provided
   let scriptContext = "";
   if (fullScript) {
-      // Truncate heavily if needed, but Gemini usually handles 1M tokens.
-      // We truncate to ~50k chars to be safe/faster for Flash models if not Pro.
-      // Actually 2.5 Flash has 1M context, so passing substantial script is fine.
       scriptContext = `
-      【FULL SCRIPT REFERENCE / 剧本全稿参考】
-      The user has uploaded the full script for this story.
-      Please analyze the role of this character based on the script below and ensure the profile aligns with the story events, dialogue style, and arc.
+      【FULL SCRIPT REFERENCE / 剧本全稿参考 - HIGH PRIORITY】
+      The user has uploaded the FULL SCRIPT for this story.
+      You MUST analyze this script to identify this specific character's details.
+      
+      [INSTRUCTION]
+      1. Search the script for the character named or described as: "${briefDescription}" or implied by the role "${role}".
+      2. EXTRACT facts from the script (age, appearance, background, personality) and use them in the profile.
+      3. ONLY if the script does not mention a specific detail, you may creatively invent it to fit the universe.
+      4. The SCRIPT is the Source of Truth.
       
       [SCRIPT START]
-      ${fullScript.substring(0, 100000)} ... (Script Truncated if > 100k chars)
+      ${fullScript.substring(0, 150000)} ...
       [SCRIPT END]
       `;
   }
@@ -457,88 +318,79 @@ export const generateCharacterProfile = async (
   }
 };
 
-// ... (generateCharacterVisualDescription, generateCharacterImage remain largely same) ...
-
 export const generateCharacterVisualDescription = async (
   character: Character
 ): Promise<string> => {
+  // Check if there is a '01' image to use as reference
   const refImage = character.images?.find(img => img.angle.startsWith('01'));
 
-  const systemPrompt = "You are a Concept Artist and Character Designer (角色设计师). Your task is to synthesize a text profile into a vivid, detailed visual description optimized for image generation.";
-  
-  // Base Text Prompt
+  const systemPrompt = "You are a professional Character Concept Designer (角色概念设计师). Your task is to extract precise visual details from a character profile and create a high-fidelity image generation prompt.";
+
   let userPrompt = `
-    Please generate a detailed "Visual Description" (定妆描述词) for the following character.
-    This description will be used as a PROMPT for an AI Image Generator.
+    Please write a detailed "Visual Description" (Prompt) for AI Image Generation based STRICTLY on the user's provided profile data.
     
-    [CHARACTER PROFILE]
-    Name: ${character.roots.name}
-    Age: ${character.roots.age}
-    Gender: ${character.roots.gender}
-    Origin: ${character.roots.origin}
+    [CORE IDENTITY - HIGHEST PRIORITY]
+    You MUST adhere to these fields. Do NOT deviate.
+    - Name: ${character.roots.name}
+    - Age: ${character.roots.age}
+    - Gender: ${character.roots.gender}  <-- CRITICAL: You MUST strictly adhere to this gender. Do NOT hallucinate the opposite gender.
+    - Role: ${character.role || 'Character'}
+    - Ethnicity/Origin: ${character.roots.origin}
     
-    [APPEARANCE]
-    ${character.shape.appearance}
+    [APPEARANCE & FASHION - USER DEFINED]
+    These are the visual facts provided by the user.
+    - Physical Appearance: ${character.shape.appearance}
+    - Clothing/Fashion: ${character.shape.fashion}
+    - Distinctive Habits/Props: ${character.shape.habits}
     
-    [FASHION]
-    ${character.shape.fashion}
+    [TASK INSTRUCTIONS]
+    1. READ the "Core Identity" and "Appearance" fields above carefully. They are the Source of Truth.
+    2. Synthesize them into a vivid, descriptive paragraph.
+    3. If specific details (e.g., hair color, eye color) are missing in the "Appearance" field, INFER them logically based on "Origin", "Age", and "Role" (e.g., a Viking usually has rugged clothes; a Cyberpunk character has neon tech).
+    4. **Avoid Logic Errors**: Ensure the clothing matches the age and role.
+    5. **Strict Gender Compliance**: Ensure all pronouns and physical descriptions match the Gender field: "${character.roots.gender}".
     
-    [PERSONALITY / VIBE]
-    ${character.soul.corePersonality}
-    ${character.soul.moralCompass}
-    
-    [REQUIREMENTS]
-    1. Provide detailed description of facial features (eyes, nose, skin texture, makeup).
-    2. Provide detailed description of hairstyle and color.
-    3. Provide detailed description of clothing, accessories, and fabric materials.
-    4. Describe the overall "Vibe", "Aura" or "Lighting" visually.
-    5. Output in Simplified Chinese.
-    6. Keep it under 300 words. Focus on visual keywords.
+    Output Language: Simplified Chinese (optimized for visual description).
+    Output Format: A single descriptive paragraph focusing on facial features, body type, hair, clothing, and overall vibe.
   `;
 
-  // If Reference Image exists, we use Gemini's Multimodal capability
+  // Multimodal Capability Check
   if (refImage) {
-      console.log("Generating visual description using Reference Image...");
-      
       const config = getTextConfig();
-      if (config.provider !== 'gemini') {
-         userPrompt += "\n[NOTE] Reference image available but current text provider does not support vision. Generating based on text profile only.";
-         return await generateTextViaProvider(systemPrompt, userPrompt, false);
-      }
+      // Only Gemini supports multimodal input
+      if (config.provider === 'gemini') {
+          console.log("Generating visual description using Reference Image...");
+          const geminiOptions: any = { apiKey: config.apiKey };
+          if (config.baseUrl) geminiOptions.baseUrl = config.baseUrl;
+          const ai = new GoogleGenAI(geminiOptions);
 
-      const geminiOptions: any = { apiKey: config.apiKey };
-      if (config.baseUrl) geminiOptions.baseUrl = config.baseUrl;
-      const ai = new GoogleGenAI(geminiOptions);
+          const parts: any[] = [];
+          const { mimeType, data } = extractDataUri(refImage.url);
+          
+          parts.push({ inlineData: { mimeType, data } });
+          
+          userPrompt += `
+          \n\n[REFERENCE IMAGE PROVIDED]
+          A reference image (Concept Art) is attached.
+          1. Use this image to understand the *visual style*, *art direction*, and *specific details* (like exact hair style or costume).
+          2. **CONFLICT RESOLUTION**: If the Text Profile (Gender/Age) contradicts the image, **THE TEXT PROFILE WINS**. You must describe the character defined in the TEXT, using the style of the image.
+          `;
+          
+          parts.push({ text: systemPrompt + "\n\n" + userPrompt });
 
-      const parts: any[] = [];
-      const { mimeType, data } = extractDataUri(refImage.url);
-      
-      parts.push({ inlineData: { mimeType, data } });
-      
-      userPrompt += `
-      \n\n[CRITICAL INSTRUCTION - REFERENCE IMAGE ATTACHED]
-      I have attached the "Front View Benchmark" image of this character.
-      You MUST base your visual description on this image to ensure consistency.
-      1. Describe the EXACT hair color and style shown in the image.
-      2. Describe the EXACT clothing details shown in the image.
-      3. Describe the EXACT facial features shown in the image.
-      4. Use the text profile only for context/vibe. The IMAGE is the truth for physical appearance.
-      `;
-      
-      parts.push({ text: systemPrompt + "\n\n" + userPrompt });
-
-      try {
-          const response = await ai.models.generateContent({
-              model: 'gemini-2.5-flash',
-              contents: { parts },
-          });
-          return response.text || "";
-      } catch (e) {
-          console.error("Multimodal generation failed, falling back to text.", e);
-          return await generateTextViaProvider(systemPrompt, userPrompt, false);
+          try {
+              const response = await ai.models.generateContent({
+                  model: 'gemini-2.5-flash',
+                  contents: { parts },
+              });
+              return response.text || "";
+          } catch (e) {
+              console.error("Multimodal generation failed, falling back to text.", e);
+          }
       }
   }
 
+  // Fallback to text-only generation
   return await generateTextViaProvider(systemPrompt, userPrompt, false);
 };
 
@@ -547,7 +399,8 @@ export const generateCharacterImage = async (
   angleDescription: string,
   modelName?: string, 
   referenceImageBase64?: string | null,
-  customApiKey?: string
+  customApiKey?: string,
+  referenceType: 'identity' | 'style' = 'identity'
 ): Promise<string> => {
   let config: ImageGenConfig;
   try {
@@ -561,49 +414,63 @@ export const generateCharacterImage = async (
   let physicalDescription = "";
   if (character.visualDescription && character.visualDescription.trim().length > 0) {
       physicalDescription = `
-        Character Name: ${character.roots.name}
-        Age: ${character.roots.age}
+        [CHARACTER IDENTITY]
+        Name: ${character.roots.name}
         Gender: ${character.roots.gender}
+        Age: ${character.roots.age}
         
-        [DETAILED VISUAL DESCRIPTION (PRIORITY)]
+        [VISUAL DESCRIPTION (Source of Truth)]
         ${character.visualDescription}
       `;
   } else {
       physicalDescription = `
-        Character Name: ${character.roots.name}
-        Age: ${character.roots.age}
+        [CHARACTER IDENTITY]
+        Name: ${character.roots.name}
         Gender: ${character.roots.gender}
-        Ethnicity/Origin: ${character.roots.origin}
+        Age: ${character.roots.age}
+        Origin: ${character.roots.origin}
         
-        [VISUAL FEATURES - STRICT]
+        [VISUAL FEATURES]
         ${character.shape.appearance}
         
-        [OUTFIT / FASHION - STRICT]
+        [FASHION]
         ${character.shape.fashion}
       `;
   }
 
   let referenceInstruction = "";
   if (referenceImageBase64) {
-      referenceInstruction = `
-      【EXTREME CONSISTENCY REQUIRED】
-      A reference image has been provided. You MUST generate the EXACT SAME CHARACTER.
-      1. Same facial features (eyes, nose, mouth structure).
-      2. Same hair style and color.
-      3. Same clothing details and fabric.
-      4. Only change the POSE and CAMERA ANGLE as requested below.
-      `;
+      if (referenceType === 'identity') {
+          referenceInstruction = `
+          【EXTREME CONSISTENCY REQUIRED (IDENTITY)】
+          A reference image has been provided. You MUST generate the EXACT SAME CHARACTER.
+          1. Same facial features (eyes, nose, mouth structure).
+          2. Same hair style and color.
+          3. Same clothing details and fabric.
+          4. Only change the POSE and CAMERA ANGLE as requested below.
+          `;
+      } else {
+          // Style Reference Mode (e.g., using Protagonist for Antagonist's shot 01)
+          referenceInstruction = `
+          【STYLE & ATMOSPHERE REFERENCE ONLY】
+          A reference image is provided for VISUAL STYLE, LIGHTING, and BACKGROUND consistency.
+          1. **DO NOT** copy the face, age, gender, or clothing of the person in the reference image.
+          2. **MUST** copy the Art Style (e.g., film grain, color palette, lighting direction, contrast).
+          3. **MUST** copy the Background environment and texture (e.g. if reference has a grey studio background, use that).
+          4. Generate the NEW character described in the [CHARACTER IDENTITY] and [VISUAL DESCRIPTION] sections, but render them as if they are standing in the same "movie scene" as the reference image.
+          `;
+      }
   }
 
   const textPrompt = `
     Professional Character Design Sheet, High Fidelity, 4K Resolution.
     
     【CRITICAL REQUIREMENT】:
-    1. BACKGROUND: Pure SOLID Color Background (Studio White or Neutral Grey). NO Scenery, NO Environment, NO Texture.
-    2. CONSISTENCY: This MUST be the EXACT SAME CHARACTER as described below.
+    1. BACKGROUND: Pure SOLID Color Background (Studio White or Neutral Grey) OR Consistent with Reference Image Atmosphere.
+    2. CONSISTENCY: Follow the instructions below regarding the Reference Image.
     ${referenceInstruction}
     
-    【SUBJECT DESCRIPTION】:
+    【SUBJECT DESCRIPTION (NEW CHARACTER)】:
     ${physicalDescription}
     
     【CAMERA / ANGLE】:
@@ -613,7 +480,7 @@ export const generateCharacterImage = async (
   `;
 
   try {
-    console.log(`Generating character image using ${effectiveModel}`);
+    console.log(`Generating character image using ${effectiveModel} (RefType: ${referenceType})`);
     const geminiOptions: any = { apiKey: config.apiKey };
     if (config.baseUrl) geminiOptions.baseUrl = config.baseUrl;
     
@@ -625,7 +492,7 @@ export const generateCharacterImage = async (
     if (referenceImageBase64) {
       const { mimeType, data } = extractDataUri(referenceImageBase64);
       parts.push({ inlineData: { mimeType, data } });
-      parts.push({ text: "Reference Image (above) for strict character look consistency." });
+      parts.push({ text: "Reference Image (above). See strict instructions on how to use it (Identity vs Style)." });
     }
     parts.push({ text: textPrompt });
 
@@ -664,6 +531,7 @@ export const generateCharacterImage = async (
   }
 };
 
+// ... (Rest of the file remains unchanged) ...
 export const generateSceneDescription = async (
   universeContext: string,
   sceneName: string,
@@ -699,8 +567,6 @@ export const generateSceneDescription = async (
     return result;
   } catch (e) { throw e; }
 };
-
-// ... (generateSceneImage, generateScenePlotIdeas, generateStoryboardFrameImage, refineStoryboardPanel remain same) ...
 
 export const generateScenePlotIdeas = async (
   context: string,
@@ -807,7 +673,6 @@ export const generateSceneImage = async (
   }
 };
 
-// ... (generateStoryboardFrameImage, refineStoryboardPanel code remains the same) ...
 export interface ShotReference {
     frameIndex: number;
     charName: string;
@@ -1176,4 +1041,122 @@ export const polishShotText = async (context: string, currentContent: string): P
       - Return ONLY the raw string of the new description.
     `;
     return await generateTextViaProvider(systemPrompt, userPrompt, false);
+};
+
+// --- DIAGNOSTICS ---
+
+export interface DiagnosisResult {
+  step: string;
+  status: 'success' | 'error' | 'warning';
+  message: string;
+}
+
+export const diagnoseNetwork = async (
+  apiKey: string,
+  imageApiKey: string,
+  textConfig: { provider: string; deepseekKey: string; deepseekBaseUrl: string; deepseekModel: string },
+  target: 'text' | 'image'
+): Promise<DiagnosisResult[]> => {
+  const logs: DiagnosisResult[] = [];
+  const log = (step: string, status: 'success' | 'error' | 'warning', message: string) => {
+      logs.push({ step, status, message });
+  };
+
+  if (target === 'text') {
+      log('Check Config', 'success', `Provider: ${textConfig.provider}`);
+      if (textConfig.provider === 'gemini') {
+          if (!apiKey) {
+              log('API Key', 'error', 'Gemini API Key is missing.');
+              return logs;
+          }
+          try {
+              const ai = new GoogleGenAI({ apiKey });
+              log('Connection', 'success', 'Client initialized.');
+              const start = Date.now();
+              await ai.models.generateContent({
+                  model: 'gemini-2.5-flash',
+                  contents: 'Ping',
+              });
+              const duration = Date.now() - start;
+              log('Latency', 'success', `Response received in ${duration}ms`);
+              log('Result', 'success', 'Gemini Text API is working.');
+          } catch (e: any) {
+              log('API Call', 'error', e.message || 'Unknown error');
+          }
+      } else {
+           // Deepseek/OpenAI
+           if (!textConfig.deepseekKey) {
+               log('API Key', 'error', 'DeepSeek API Key is missing.');
+               return logs;
+           }
+           try {
+               const config: TextGenConfig = {
+                   provider: 'deepseek',
+                   apiKey: textConfig.deepseekKey,
+                   baseUrl: textConfig.deepseekBaseUrl,
+                   modelId: textConfig.deepseekModel
+               };
+               log('Connection', 'success', `Connecting to ${config.baseUrl}...`);
+               const start = Date.now();
+               await callOpenAICompatibleAPI(config, 'System', 'Ping');
+               const duration = Date.now() - start;
+               log('Latency', 'success', `Response received in ${duration}ms`);
+               log('Result', 'success', 'DeepSeek/OpenAI API is working.');
+           } catch (e: any) {
+                log('API Call', 'error', e.message || 'Unknown error');
+           }
+      }
+  } else {
+      // Image Diagnosis
+      const effectiveKey = imageApiKey || apiKey;
+       if (!effectiveKey) {
+          log('API Key', 'error', 'No API Key available for Image Generation.');
+          return logs;
+      }
+      
+      try {
+           const ai = new GoogleGenAI({ apiKey: effectiveKey });
+           log('Connection', 'success', 'Client initialized (Visual).');
+           
+           // Verify Key with simple text request first
+           try {
+               await ai.models.generateContent({
+                  model: 'gemini-2.5-flash',
+                  contents: 'Ping',
+               });
+               log('Key Validation', 'success', 'API Key is valid for basic text requests.');
+           } catch (e: any) {
+               log('Key Validation', 'error', `Key invalid for basic requests: ${e.message}`);
+           }
+
+           log('Model Check', 'warning', 'Testing Gemini 2.5 Flash Image generation...');
+           
+           const start = Date.now();
+           const response = await ai.models.generateContent({
+               model: 'gemini-2.5-flash-image', 
+               contents: { parts: [{ text: "A small red box" }] },
+           });
+           const duration = Date.now() - start;
+           
+           const hasImage = response.candidates?.[0]?.content?.parts?.some(p => p.inlineData);
+           
+           if (hasImage) {
+               log('Generation', 'success', `Image generated in ${duration}ms.`);
+               log('Result', 'success', 'Visual API is operational.');
+           } else {
+               log('Generation', 'warning', 'Response received but no image data found.');
+           }
+
+      } catch (e: any) {
+           if (e.message?.includes('403') || e.message?.includes('PERMISSION_DENIED')) {
+               log('Permission', 'error', '403 Forbidden. Check if API is enabled in Google Cloud Console or if Billing is active.');
+           } else if (e.message?.includes('not found')) {
+               log('Model', 'error', 'Model not found. Check if your API Key has access to the requested model.');
+           } else {
+               log('API Call', 'error', e.message || 'Unknown error');
+           }
+      }
+  }
+
+  return logs;
 };

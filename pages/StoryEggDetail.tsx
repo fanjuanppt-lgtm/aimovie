@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Universe, StoryEgg, Character, Storyboard, Scene } from '../types';
@@ -15,11 +16,12 @@ interface StoryEggDetailProps {
   onRestoreCharacter: (id: string) => Promise<void>;
   onHardDeleteCharacter: (id: string) => Promise<void>;
   onUpdateStoryboard: (s: Storyboard) => Promise<void>;
+  onUpdateScene: (s: Scene) => Promise<void>;
 }
 
 export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({ 
     universes, storyEggs, characters, storyboards, scenes, 
-    onUpdateEgg, onUpdateCharacter, onDeleteCharacter, onRestoreCharacter, onHardDeleteCharacter, onUpdateStoryboard
+    onUpdateEgg, onUpdateCharacter, onDeleteCharacter, onRestoreCharacter, onHardDeleteCharacter, onUpdateStoryboard, onUpdateScene
 }) => {
   const navigate = useNavigate();
   const { universeId, eggId } = useParams<{ universeId: string; eggId: string }>();
@@ -43,7 +45,9 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
     .filter(s => s.storyEggId === eggId)
     .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
     
-  const eggScenes = scenes.filter(s => s.storyEggId === eggId);
+  const eggScenes = scenes
+    .filter(s => s.storyEggId === eggId)
+    .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
 
   // Editing State
   const [isEditing, setIsEditing] = useState(false);
@@ -53,7 +57,7 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
   // Trash UI State
   const [showCharTrash, setShowCharTrash] = useState(false);
   
-  // Drag State (Shared for both characters and storyboards since they are in different tabs)
+  // Drag State (Shared for characters, storyboards, and scenes)
   const [draggedId, setDraggedId] = useState<string | null>(null);
 
   // Script Upload
@@ -175,6 +179,29 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
       }
       setDraggedId(null);
   };
+
+  const handleSceneDrop = async (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (!draggedId || draggedId === targetId) return;
+
+    const sourceIndex = eggScenes.findIndex(s => s.id === draggedId);
+    const targetIndex = eggScenes.findIndex(s => s.id === targetId);
+
+    if (sourceIndex === -1 || targetIndex === -1) return;
+
+    const newOrder = [...eggScenes];
+    const [movedScene] = newOrder.splice(sourceIndex, 1);
+    newOrder.splice(targetIndex, 0, movedScene);
+
+    for (let i = 0; i < newOrder.length; i++) {
+        const scene = newOrder[i];
+        if (scene.orderIndex !== i) {
+            const updated = { ...scene, orderIndex: i };
+            await onUpdateScene(updated);
+        }
+    }
+    setDraggedId(null);
+};
 
   if (!universe || !egg) return <div className="p-8 text-slate-400">故事档案未找到</div>;
 
@@ -504,29 +531,41 @@ export const StoryEggDetail: React.FC<StoryEggDetailProps> = ({
              {eggScenes.map(scene => {
                  const mainImg = scene.images.find(i => i.type === 'main');
                  return (
-                     <Link 
+                     <div 
                         key={scene.id}
-                        to={`/universe/${universeId}/egg/${eggId}/scene-studio/${scene.id}`}
-                        className="block group bg-cinematic-800 rounded-xl border border-cinematic-700 overflow-hidden hover:border-cinematic-gold transition-all hover:shadow-lg"
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, scene.id)}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleSceneDrop(e, scene.id)}
+                        className={`group bg-cinematic-800 rounded-xl border border-cinematic-700 overflow-hidden hover:border-cinematic-gold transition-all hover:shadow-lg relative ${draggedId === scene.id ? 'opacity-50' : 'opacity-100'}`}
                      >
-                         <div className="aspect-video bg-black relative">
-                             {mainImg ? (
-                                 <img src={mainImg.url} alt={scene.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
-                             ) : (
-                                 <div className="w-full h-full flex items-center justify-center text-slate-600">无场景图</div>
-                             )}
-                             <div className="absolute inset-0 bg-gradient-to-t from-cinematic-900 to-transparent opacity-80" />
-                             <div className="absolute bottom-0 left-0 p-4 w-full">
-                                 <h3 className="text-xl font-bold text-white mb-1">{scene.name}</h3>
-                                 <div className="flex gap-2 text-xs text-slate-400">
-                                     <span>{scene.images.length} 张视图</span>
-                                 </div>
-                             </div>
-                         </div>
-                         <div className="p-4">
-                             <p className="text-sm text-slate-400 line-clamp-2">{scene.description}</p>
-                         </div>
-                     </Link>
+                         <div 
+                            className="absolute top-2 left-2 z-20 p-1.5 bg-black/50 text-slate-300 rounded cursor-move opacity-0 group-hover:opacity-100 transition-opacity hover:bg-cinematic-gold hover:text-black"
+                            title="按住拖动排序"
+                        >
+                             <GripVertical size={16} />
+                        </div>
+
+                         <Link to={`/universe/${universeId}/egg/${eggId}/scene-studio/${scene.id}`} className="block">
+                            <div className="aspect-video bg-black relative">
+                                {mainImg ? (
+                                    <img src={mainImg.url} alt={scene.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-slate-600">无场景图</div>
+                                )}
+                                <div className="absolute inset-0 bg-gradient-to-t from-cinematic-900 to-transparent opacity-80" />
+                                <div className="absolute bottom-0 left-0 p-4 w-full">
+                                    <h3 className="text-xl font-bold text-white mb-1">{scene.name}</h3>
+                                    <div className="flex gap-2 text-xs text-slate-400">
+                                        <span>{scene.images.length} 张视图</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="p-4">
+                                <p className="text-sm text-slate-400 line-clamp-2">{scene.description}</p>
+                            </div>
+                         </Link>
+                     </div>
                  )
              })}
           </div>
